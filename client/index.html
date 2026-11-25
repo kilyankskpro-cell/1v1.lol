@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>1v1 Build Fight</title>
+  </head>
+  <body>
+    <div id="game-root"></div>
+
+    <div id="hud" class="hidden">
+      <div id="crosshair">
+        <span class="ch top"></span><span class="ch bottom"></span>
+        <span class="ch left"></span><span class="ch right"></span>
+        <span class="ch dot"></span>
+      </div>
+      <div id="hitmarker"></div>
+      <div id="scope" class="hidden"></div>
+      <div id="damage-flash"></div>
+      <div id="topbar"><span id="mode-label"></span><span id="score"></span></div>
+      <div id="center-message"></div>
+      <div id="edit-hint"></div>
+      <div id="damage-numbers"></div>
+
+      <div id="bottom-left">
+        <div class="bar"><div id="shield-fill" class="fill shield"></div><span id="shield-text"></span></div>
+        <div class="bar"><div id="health-fill" class="fill health"></div><span id="health-text"></span></div>
+      </div>
+
+      <div id="bottom-right">
+        <div id="materials"></div>
+        <div id="build-slots" class="slots"></div>
+        <div id="weapon-slots" class="slots"></div>
+      </div>
+
+      <div id="lock-hint">Cliquez pour jouer · Échap pour libérer la souris</div>
+    </div>
+
+    <div id="menu">
+      <h1>1v1 <span>BUILD</span> FIGHT</h1>
+      <input id="name-input" maxlength="16" placeholder="Pseudo" />
+      <div class="menu-buttons">
+        <button data-mode="duel">Duel 1v1</button>
+        <button data-mode="justbuild" class="secondary">JustBuild (entraînement)</button>
+      </div>
+      <table class="controls">
+        <tr><td>Z Q S D</td><td>Se déplacer</td><td>Espace</td><td>Sauter</td></tr>
+        <tr><td>Shift</td><td>Sprint</td><td>Ctrl / C</td><td>S'accroupir</td></tr>
+        <tr><td>Clic gauche</td><td>Tirer / Construire</td><td>Clic droit</td><td>Viser</td></tr>
+        <tr><td>1 – 4 / Molette</td><td>Armes</td><td>T</td><td>Recharger</td></tr>
+        <tr><td>A · E · R · V</td><td>Mur · Sol · Rampe · Toit</td><td>G</td><td>Éditer (porte / fenêtre)</td></tr>
+      </table>
+      <p class="hint">Duel : ouvrez un 2ᵉ onglet pour affronter vous-même un adversaire.</p>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
