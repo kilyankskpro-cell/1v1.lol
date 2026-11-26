@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>1v1</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#16181d;color:#fff;font-family:system-ui,sans-serif;text-align:center}
+canvas{background:#2a2f3a;border:2px solid #444;max-width:100%;display:none;cursor:crosshair;margin:10px auto}
+button,input{font-size:18px;padding:10px 18px;margin:6px;border-radius:8px;border:0}
+button{background:#4a8cff;color:#fff;cursor:pointer}
+textarea{width:min(600px,90%);height:70px;font-size:12px;border-radius:8px}
+.box{display:none;margin:10px auto}
+#msg{min-height:24px;color:#ffd166}
+</style></head><body>
+<h1>1v1</h1>
+<div id="menu">
+  <div><button id="solo">Solo (vs bot)</button></div>
+  <div><button id="host">Créer une partie en réseau local</button><button id="join">Rejoindre une partie</button></div>
+  <div class="box" id="hostBox">
+    <p>1. Envoie ce code à ton adversaire :</p>
+    <textarea id="offer" readonly></textarea><br><button id="copyOffer">Copier</button>
+    <p>2. Colle ici le code de réponse qu'il te renvoie :</p>
+    <textarea id="answerIn"></textarea><br><button id="connect">Lancer la partie</button>
+  </div>
+  <div class="box" id="joinBox">
+    <p>1. Colle le code de l'hôte :</p>
+    <textarea id="offerIn"></textarea><br><button id="makeAnswer">Valider</button>
+    <p>2. Renvoie ce code de réponse à l'hôte :</p>
+    <textarea id="answer" readonly></textarea><br><button id="copyAnswer">Copier</button>
+  </div>
+  <p>Déplacement : ZQSD / WASD / flèches · Viser : souris · Tirer : clic · Premier à 5 kills.</p>
+</div>
+<div id="msg"></div>
+<canvas id="c" width="800" height="500"></canvas>
+<script>
+// ---------- Logique de jeu (exécutée chez le joueur solo ou chez l'hôte) ----------
+const W = 800, H = 500, R = 16, SPEED = 220, BSPEED = 600, COOLDOWN = 0.28, DMG = 20, WIN = 5;
+const WALLS = [{ x: 380, y: 150, w: 40, h: 200 }, { x: 150, y: 60, w: 100, h: 30 }, { x: 550, y: 410, w: 100, h: 30 }];
+const SPAWNS = [{ x: 60, y: H / 2 }, { x: W - 60, y: H / 2 }];
+const hitsWall = (x, y, r) => WALLS.some(b => x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h);
+
+class Game {
+  constructor() {
+    this.players = [0, 1].map(i => ({ x: SPAWNS[i].x, y: SPAWNS[i].y, angle: i ? Math.PI : 0, hp: 100, cd: 0, score: 0 }));
+    this.bullets = []; this.winner = -1;
+  }
+  step(dt, inputs) {
+    if (this.winner >= 0) return;
+    this.players.forEach((p, i) => {
+      const inp = inputs[i] || {};
+      const dx = (inp.right ? 1 : 0) - (inp.left ? 1 : 0), dy = (inp.down ? 1 : 0) - (inp.up ? 1 : 0), l = Math.hypot(dx, dy) || 1;
+      const nx = Math.min(W - R, Math.max(R, p.x + dx / l * SPEED * dt)), ny = Math.min(H - R, Math.max(R, p.y + dy / l * SPEED * dt));
+      if (!hitsWall(nx, p.y, R)) p.x = nx;
+      if (!hitsWall(p.x, ny, R)) p.y = ny;
+      if (typeof inp.angle === 'number') p.angle = inp.angle;
+      p.cd -= dt;
+      if (inp.shoot && p.cd <= 0) {
+        p.cd = COOLDOWN;
+        this.bullets.push({ x: p.x + Math.cos(p.angle) * R, y: p.y + Math.sin(p.angle) * R, vx: Math.cos(p.angle) * BSPEED, vy: Math.sin(p.angle) * BSPEED, o: i });
+      }
+    });
+    this.bullets = this.bullets.filter(b => {
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      if (b.x < 0 || b.x > W || b.y < 0 || b.y > H || hitsWall(b.x, b.y, 2)) return false;
+      const t = this.players[1 - b.o];
+      if (Math.hypot(t.x - b.x, t.y - b.y) >= R + 3) return true;
+      t.hp -= DMG;
+      if (t.hp <= 0) {
+        if (++this.players[b.o].score >= WIN) this.winner = b.o;
+        this.players.forEach((p, i) => { p.x = SPAWNS[i].x; p.y = SPAWNS[i].y; p.hp = 100; });
+        this.bullets = [];
+      }
+      return false;
+    });
+  }
+  snapshot() { return { players: this.players, bullets: this.bullets, winner: this.winner }; }
+}
+
+// ---------- Entrées ----------
+const $ = id => document.getElementById(id), cv = $('c'), ctx = cv.getContext('2d');
+const keys = {}; let mouse = { x: W, y: H / 2 }, mouseDown = false;
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); mouse = { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height }; });
+cv.addEventListener('mousedown', () => mouseDown = true); addEventListener('mouseup', () => mouseDown = false);
+
+function readInput(p) {
+  const k = n => keys[n];
+  return { left: k('a') || k('q') || k('arrowleft'), right: k('d') || k('arrowright'), up: k('w') || k('z') || k('arrowup'),
+    down: k('s') || k('arrowdown'), angle: Math.atan2(mouse.y - p.y, mouse.x - p.x), shoot: mouseDown };
+}
+function botInput(bot, me) {
+  const d = Math.hypot(me.x - bot.x, me.y - bot.y), t = performance.now() / 700;
+  return { left: d < 200, right: d > 300, up: Math.sin(t * 1.3) > 0.3, down: Math.sin(t * 1.3) < -0.3,
+    angle: Math.atan2(me.y - bot.y, me.x - bot.x) + Math.sin(t * 3) * .08, shoot: Math.random() < .5 };
+}
+
+// ---------- Boucle / rendu ----------
+let mode = null, game = null, you = 0, remoteInput = {}, state = null, raf = 0, last = 0, tick = 0;
+const msg = t => $('msg').textContent = t || '';
+const show = inMenu => { $('menu').style.display = inMenu ? '' : 'none'; cv.style.display = inMenu ? 'none' : 'block'; };
+
+function start(m, me) { mode = m; you = me; game = m === 'guest' ? null : new Game(); state = null; show(false); last = performance.now(); loop(); }
+function stop() {
+  cancelAnimationFrame(raf); mode = null;
+  if (pc) { pc.close(); pc = null; channel = null; }
+  ['hostBox', 'joinBox'].forEach(id => $(id).style.display = 'none');
+  show(true);
+}
+function loop() {
+  raf = requestAnimationFrame(loop);
+  const now = performance.now(), dt = Math.min(.05, (now - last) / 1000); last = now;
+  let s;
+  if (mode === 'guest') {
+    s = state; if (!s) return;
+    send({ t: 'input', i: readInput(s.players[you]) });
+  } else {
+    const [p0, p1] = game.players;
+    game.step(dt, [readInput(p0), mode === 'solo' ? botInput(p1, p0) : remoteInput]);
+    s = game.snapshot();
+    if (mode === 'host' && (++tick % 2 === 0 || s.winner >= 0)) send({ t: 'state', s });
+  }
+  draw(s);
+  if (s.winner >= 0) { cancelAnimationFrame(raf); msg(s.winner === you ? 'Victoire !' : 'Défaite…'); setTimeout(stop, 2500); }
+}
+function draw(s) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#556'; WALLS.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+  s.players.forEach((p, i) => {
+    ctx.fillStyle = i === you ? '#4a8cff' : '#ff5d5d';
+    ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + Math.cos(p.angle) * (R + 10), p.y + Math.sin(p.angle) * (R + 10)); ctx.stroke();
+    ctx.fillStyle = '#400'; ctx.fillRect(p.x - 20, p.y - 28, 40, 5);
+    ctx.fillStyle = '#4c4'; ctx.fillRect(p.x - 20, p.y - 28, 40 * Math.max(0, p.hp) / 100, 5);
+  });
+  ctx.fillStyle = '#ff0'; s.bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, 7); ctx.fill(); });
+  ctx.fillStyle = '#fff'; ctx.font = '20px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText(`Toi ${s.players[you].score}  —  ${s.players[1 - you].score} Adversaire  (premier à ${WIN})`, W / 2, 26);
+}
+
+// ---------- Réseau local en pair-à-pair (WebRTC, sans serveur ni Internet) ----------
+let pc = null, channel = null;
+const send = m => channel && channel.readyState === 'open' && channel.send(JSON.stringify(m));
+const encode = d => btoa(JSON.stringify(d)), decode = s => JSON.parse(atob(s.trim()));
+
+function newPeer() {
+  if (pc) pc.close();
+  pc = new RTCPeerConnection({ iceServers: [] }); // pas de serveur STUN : connexion directe sur le réseau local
+  pc.onconnectionstatechange = () => { if (mode && ['failed', 'disconnected', 'closed'].includes(pc?.connectionState)) { msg('Connexion perdue'); stop(); } };
+}
+const gathered = () => new Promise(res => {
+  if (pc.iceGatheringState === 'complete') return res();
+  pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res();
+  setTimeout(res, 3000);
+});
+function setupChannel(ch, role) {
+  channel = ch;
+  ch.onopen = () => { msg(role === 'host' ? 'Partie en réseau local (hôte)' : 'Partie en réseau local'); start(role, role === 'host' ? 0 : 1); };
+  ch.onmessage = e => { const m = JSON.parse(e.data); if (m.t === 'input') remoteInput = m.i; else if (m.t === 'state') state = m.s; };
+}
+
+$('host').onclick = async () => {
+  newPeer(); remoteInput = {};
+  setupChannel(pc.createDataChannel('game'), 'host');
+  $('joinBox').style.display = 'none'; $('hostBox').style.display = 'block';
+  $('offer').value = 'Génération…';
+  await pc.setLocalDescription(await pc.createOffer()); await gathered();
+  $('offer').value = encode(pc.localDescription); msg('');
+};
+$('connect').onclick = async () => {
+  try { await pc.setRemoteDescription(decode($('answerIn').value)); msg('Connexion…'); }
+  catch { msg('Code de réponse invalide'); }
+};
+$('join').onclick = () => { $('hostBox').style.display = 'none'; $('joinBox').style.display = 'block'; msg(''); };
+$('makeAnswer').onclick = async () => {
+  try {
+    newPeer();
+    pc.ondatachannel = e => setupChannel(e.channel, 'guest');
+    await pc.setRemoteDescription(decode($('offerIn').value));
+    await pc.setLocalDescription(await pc.createAnswer()); await gathered();
+    $('answer').value = encode(pc.localDescription); msg("Envoie le code de réponse à l'hôte");
+  } catch { msg("Code de l'hôte invalide"); }
+};
+const copy = id => { $(id).select(); navigator.clipboard?.writeText($(id).value).catch(() => document.execCommand('copy')); msg('Code copié'); };
+$('copyOffer').onclick = () => copy('offer');
+$('copyAnswer').onclick = () => copy('answer');
+$('solo').onclick = () => { msg('Solo'); start('solo', 0); };
+</script></body></html>
