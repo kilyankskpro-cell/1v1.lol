@@ -1,0 +1,8 @@
+services:
+  web:
+    image: node:22
+    working_dir: /app
+    volumes: ["./:/app"]
+    command: ["sh","-ec","npm install && exec node --watch server.js"]
+    ports: ["3000:3000"]
+    restart: on-failure
