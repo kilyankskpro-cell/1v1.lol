@@ -10,6 +10,7 @@ import { box, flat, limb, tube, v3 } from './MeshUtil';
 /** Rareté façon Fortnite : gris, bleu, violet, or. */
 export const RARITY: Record<WeaponId, number> = {
   pickaxe: 0x8f96a3,
+  pistol: 0x3fbf5a,
   shotgun: 0x3c8dff,
   ar: 0x9b59ff,
   sniper: 0xf0a830,
@@ -62,6 +63,15 @@ export function makeWeaponModel(id: WeaponId): WeaponModel {
       leftHand: v3(0, 0.4, 0),
       trail: [marker(obj, v3(0, 1.0, -0.22)), marker(obj, p[3])],
     };
+  }
+
+  if (id === 'pistol') {
+    // Pistolet tenu à deux mains : la main gauche enveloppe la droite sous la poignée.
+    obj.add(box(0.06, 0.15, 0.08, DARK, 0, -0.08, 0.02));
+    obj.add(box(0.07, 0.08, 0.3, accent, 0, 0.03, -0.08));
+    obj.add(box(0.075, 0.035, 0.31, DARK, 0, 0.085, -0.08));
+    obj.add(tube(0.016, 0.06, DARK, 0, 0.04, -0.25));
+    return { obj, muzzle: marker(obj, v3(0, 0.04, -0.28)), rightHand: v3(0, -0.07, 0.02), leftHand: v3(-0.02, -0.11, -0.02) };
   }
 
   let left = v3(0, -0.04, -0.42);

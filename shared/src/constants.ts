@@ -43,3 +43,9 @@ export const SERVER_TICK_RATE = 20;
 export const CLIENT_SEND_RATE = 30;
 /** Délai de remise à zéro de l'arène après une élimination. */
 export const ROUND_RESTART_DELAY_MS = 3000;
+/** Manches à gagner pour remporter un match (Duel / 1v1 contre bot). */
+export const ROUNDS_TO_WIN = 5;
+/** Réapparition d'une cible d'entraînement après sa destruction. */
+export const TARGET_RESPAWN_MS = 1500;
+/** Réapparition du joueur dans les modes sans manches (entraînement). */
+export const PLAYER_RESPAWN_MS = 2000;

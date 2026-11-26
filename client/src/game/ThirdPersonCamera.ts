@@ -26,7 +26,11 @@ export type RaycastFn = (o: THREE.Vector3, d: THREE.Vector3, maxT: number) => nu
 export class ThirdPersonCamera {
   yaw = 0;
   pitch = 0;
+  /** Sensibilité de base (rad / pixel), multipliée par le réglage utilisateur. */
   sensitivity = 0.0022;
+  invertY = false;
+  /** Champ de vision hors visée (réglable dans les paramètres). */
+  baseFov = BASE_FOV;
   /** Direction de visée (centre de l'écran). */
   readonly forward = new THREE.Vector3(0, 0, -1);
   private offset = OFFSETS.normal.clone();
@@ -40,9 +44,9 @@ export class ThirdPersonCamera {
 
   /** Sensibilité proportionnelle au FOV : la visée au sniper reste précise. */
   rotate(dx: number, dy: number) {
-    const s = this.sensitivity * (this.camera.fov / BASE_FOV);
+    const s = this.sensitivity * (this.camera.fov / this.baseFov);
     this.yaw -= dx * s;
-    this.pitch = clamp(this.pitch - dy * s, -PITCH_LIMIT, PITCH_LIMIT);
+    this.pitch = clamp(this.pitch - dy * s * (this.invertY ? -1 : 1), -PITCH_LIMIT, PITCH_LIMIT);
   }
 
   addRecoil(pitchKick: number, yawKick: number) {

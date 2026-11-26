@@ -1,28 +1,37 @@
 /**
  * Une salle = une partie. Le serveur fait autorité sur :
- *  - les points de vie / bouclier et les éliminations,
+ *  - les points de vie / bouclier, les éliminations, les manches et la fin de match,
  *  - les tirs (re-raycast serveur avec les mêmes fonctions que le client),
  *  - les constructions (unicité de l'emplacement, limites, matériaux, distance),
- *  - les éditions (seulement ses propres murs).
- * Les positions sont envoyées par les clients puis validées (vitesse max, limites de l'arène).
+ *  - les éditions et destructions (ses propres pièces, toutes en mode illimité),
+ *  - les bots (IA) et les cibles d'entraînement.
+ * Les positions des humains sont envoyées par les clients puis validées (vitesse max, limites).
+ *
+ * La même classe tourne sur le serveur Node (Socket.io) et dans le navigateur
+ * (mode local, voir client/src/game/LocalServer.ts).
  */
 import type { Server, Socket } from 'socket.io';
-import { createArena, type ArenaDef, type GameMode, type Spawn } from '@shared/arena';
+import { createArena, type ArenaDef, type GameMode, type Spawn, type TargetDef } from '@shared/arena';
 import {
   BUILD_COST,
   BUILD_MAX_DISTANCE,
   MAX_HEALTH,
   MAX_SHIELD,
   PLAYER,
+  PLAYER_RESPAWN_MS,
+  ROUNDS_TO_WIN,
   ROUND_RESTART_DELAY_MS,
   STARTING_MATERIALS,
+  TARGET_RESPAWN_MS,
 } from '@shared/constants';
-import type { Colliders } from '@shared/geometry';
+import { emptyColliders, mergeColliders, type Colliders } from '@shared/geometry';
 import { add, distance, isVec3, normalize, type Vec3 } from '@shared/math';
 import type {
+  BotDifficulty,
   ClientToServerEvents,
   EditMsg,
   FireMsg,
+  PlayerKind,
   PublicPlayer,
   ServerToClientEvents,
   StateMsg,
@@ -30,16 +39,18 @@ import type {
 import { raycastWorld, type HitTarget } from '@shared/raycast';
 import {
   STRUCTURE_MAX_HP,
-  WALL_EDIT_CYCLE,
   isSpecInBounds,
+  isValidEdit,
   isValidSpecShape,
   normalizeSpec,
   structureCenter,
   structureColliders,
   structureKey,
   type Structure,
+  type StructureSpec,
 } from '@shared/structures';
-import { WEAPONS, damageFalloff, type WeaponId } from '@shared/weapons';
+import { WEAPONS, WEAPON_ORDER, damageFalloff, isWeaponId, type WeaponId } from '@shared/weapons';
+import { BotBrain, type BotWorld } from './Bot';
 
 export type GameServer = Server<ClientToServerEvents, ServerToClientEvents>;
 export type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -47,12 +58,15 @@ export type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 interface ServerPlayer {
   id: string;
   name: string;
-  socket: GameSocket;
+  kind: PlayerKind;
+  /** null pour les bots et les cibles. */
+  socket: GameSocket | null;
   spawnIndex: number;
   pos: Vec3;
   yaw: number;
   pitch: number;
   crouch: boolean;
+  air: boolean;
   weapon: WeaponId;
   building: boolean;
   hp: number;
@@ -61,6 +75,8 @@ interface ServerPlayer {
   materials: number;
   lastFire: Record<WeaponId, number>;
   lastStateAt: number;
+  brain?: BotBrain;
+  target?: TargetDef;
 }
 
 interface ServerStructure {
@@ -68,55 +84,102 @@ interface ServerStructure {
   colliders: Colliders;
 }
 
+interface ModeRules {
+  unlimited: boolean;
+  roundsToWin: number;
+  bot: boolean;
+  targets: boolean;
+}
+
+const RULES: Record<GameMode, ModeRules> = {
+  duel: { unlimited: false, roundsToWin: ROUNDS_TO_WIN, bot: false, targets: false },
+  bot: { unlimited: false, roundsToWin: ROUNDS_TO_WIN, bot: true, targets: false },
+  training: { unlimited: true, roundsToWin: 0, bot: false, targets: true },
+  freebuild: { unlimited: true, roundsToWin: 0, bot: false, targets: false },
+};
+
+const BOT_NAMES: Record<BotDifficulty, string> = { easy: 'Bot Recrue', normal: 'Bot Soldat', hard: 'Bot Élite' };
+/** Pas de simulation des bots (s) : la physique reste stable quel que soit le tick réseau. */
+const BOT_STEP = 1 / 60;
+
 let roomCounter = 0;
 
 export class Room {
   readonly id = `room-${++roomCounter}`;
   readonly arena: ArenaDef;
+  readonly rules: ModeRules;
   readonly players = new Map<string, ServerPlayer>();
   private structures = new Map<string, ServerStructure>();
+  private merged: Colliders | null = null;
   private scores: Record<string, number> = {};
+  private kills: Record<string, number> = {};
   private round = 0;
+  private matchOver = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+  private lastTick = Date.now();
+  private botAcc = 0;
+  private time = 0;
 
   constructor(
     private io: GameServer,
     readonly mode: GameMode,
+    private difficulty: BotDifficulty = 'normal',
   ) {
     this.arena = createArena(mode);
+    this.rules = RULES[mode];
   }
 
-  /** JustBuild : munitions et matériaux illimités. */
   get unlimited() {
-    return this.mode === 'justbuild';
+    return this.rules.unlimited;
+  }
+
+  /** Nombre de joueurs humains connectés (les bots et cibles ne comptent pas). */
+  get humanCount() {
+    let n = 0;
+    for (const p of this.players.values()) if (p.kind === 'player') n++;
+    return n;
+  }
+
+  private emitAll<E extends keyof ServerToClientEvents>(ev: E, ...args: Parameters<ServerToClientEvents[E]>) {
+    const target = this.io.to(this.id) as unknown as { emit: (e: E, ...a: Parameters<ServerToClientEvents[E]>) => void };
+    target.emit(ev, ...args);
   }
 
   // -------------------------------------------------------------------------
   // Cycle de vie des joueurs
   // -------------------------------------------------------------------------
 
-  addPlayer(socket: GameSocket, rawName: string) {
-    const used = new Set([...this.players.values()].map((p) => p.spawnIndex));
-    const player: ServerPlayer = {
-      id: socket.id,
-      name: rawName.replace(/[<>]/g, '').trim().slice(0, 16) || 'Joueur',
+  private createPlayer(id: string, name: string, kind: PlayerKind, socket: GameSocket | null, spawnIndex: number): ServerPlayer {
+    return {
+      id,
+      name,
+      kind,
       socket,
-      spawnIndex: used.has(0) ? 1 : 0,
+      spawnIndex,
       pos: { x: 0, y: 0, z: 0 },
       yaw: 0,
       pitch: 0,
       crouch: false,
-      weapon: 'pickaxe',
+      air: false,
+      weapon: 'ar',
       building: false,
       hp: MAX_HEALTH,
       shield: MAX_SHIELD,
       alive: false,
       materials: STARTING_MATERIALS,
-      lastFire: { pickaxe: 0, shotgun: 0, ar: 0, sniper: 0 },
+      lastFire: Object.fromEntries(WEAPON_ORDER.map((w) => [w, 0])) as Record<WeaponId, number>,
       lastStateAt: Date.now(),
     };
+  }
+
+  addPlayer(socket: GameSocket, rawName: string) {
+    const used = new Set([...this.players.values()].map((p) => p.spawnIndex));
+    const name = rawName.replace(/[<>]/g, '').trim().slice(0, 16) || 'Joueur';
+    const player = this.createPlayer(socket.id, name, 'player', socket, used.has(0) ? 1 : 0);
     this.players.set(player.id, player);
     this.scores[player.id] = 0;
+    this.kills[player.id] = 0;
     socket.join(this.id);
 
     // Chaque handler est protégé : un message malformé ne doit jamais faire tomber la salle.
@@ -133,36 +196,90 @@ export class Room {
     socket.on('fire', guard(this.onFire));
     socket.on('build', guard(this.onBuild));
     socket.on('edit', guard(this.onEdit));
+    socket.on('demolish', guard(this.onDemolish));
+    socket.on('restart', () => guard(this.onRestart)(undefined));
     socket.on('latency', (ack) => typeof ack === 'function' && ack());
+
+    if (this.rules.bot && ![...this.players.values()].some((p) => p.kind === 'bot')) this.addBot();
+    if (this.rules.targets && ![...this.players.values()].some((p) => p.kind === 'target')) this.addTargets();
 
     socket.emit('joined', {
       selfId: player.id,
       mode: this.mode,
       unlimited: this.unlimited,
+      roundsToWin: this.rules.roundsToWin,
       players: [...this.players.values()].map(toPublic),
       structures: [...this.structures.values()].map((s) => s.data),
     });
 
-    // Duel : la manche (re)démarre à l'arrivée de chaque joueur ; seul, on peut s'échauffer.
+    // La manche (re)démarre à l'arrivée de chaque joueur ; seul en duel, on peut s'échauffer.
     this.startRound();
+  }
+
+  private addBot() {
+    const bot = this.createPlayer(`bot-${this.id}`, BOT_NAMES[this.difficulty], 'bot', null, 1);
+    bot.brain = new BotBrain(this.difficulty);
+    bot.pos = bot.brain.motor.pos;
+    this.players.set(bot.id, bot);
+    this.scores[bot.id] = 0;
+    this.kills[bot.id] = 0;
+  }
+
+  private addTargets() {
+    this.arena.targets.forEach((t, i) => {
+      const target = this.createPlayer(`target-${i}`, t.move ? 'Cible mobile' : 'Cible', 'target', null, -1);
+      target.target = t;
+      target.shield = 0;
+      this.players.set(target.id, target);
+    });
   }
 
   removePlayer(id: string) {
     if (!this.players.delete(id)) return;
     delete this.scores[id];
-    if (this.players.size > 0) {
+    delete this.kills[id];
+    if (this.humanCount > 0) {
       for (const k of Object.keys(this.scores)) this.scores[k] = 0;
-      this.io.to(this.id).emit('opponentLeft');
+      this.emitAll('opponentLeft');
+      this.matchOver = false;
       this.startRound();
     }
   }
 
   dispose() {
     if (this.restartTimer) clearTimeout(this.restartTimer);
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
+  }
+
+  private later(ms: number, fn: () => void) {
+    const t = setTimeout(() => {
+      this.timers.delete(t);
+      fn();
+    }, ms);
+    this.timers.add(t);
   }
 
   private spawnFor(p: ServerPlayer): Spawn {
+    if (p.target) return p.target;
     return this.arena.spawns[p.spawnIndex % this.arena.spawns.length];
+  }
+
+  private resetPlayer(p: ServerPlayer) {
+    const s = this.spawnFor(p);
+    if (p.brain) {
+      p.brain.reset(s);
+      p.pos = p.brain.motor.pos;
+    } else {
+      p.pos = { x: s.x, y: s.y, z: s.z };
+    }
+    p.yaw = s.yaw;
+    p.hp = MAX_HEALTH;
+    p.shield = p.kind === 'target' ? 0 : MAX_SHIELD;
+    p.alive = true;
+    p.materials = STARTING_MATERIALS;
+    p.lastStateAt = Date.now();
+    return s;
   }
 
   /** Nouvelle manche : arène vidée, joueurs replacés et soignés. */
@@ -171,19 +288,17 @@ export class Room {
     this.restartTimer = null;
     this.round++;
     this.structures.clear();
+    this.merged = null;
     const spawns: Record<string, Spawn> = {};
-    for (const p of this.players.values()) {
-      const s = this.spawnFor(p);
-      p.pos = { x: s.x, y: s.y, z: s.z };
-      p.yaw = s.yaw;
-      p.hp = MAX_HEALTH;
-      p.shield = MAX_SHIELD;
-      p.alive = true;
-      p.materials = STARTING_MATERIALS;
-      p.lastStateAt = Date.now();
-      spawns[p.id] = s;
-    }
-    this.io.to(this.id).emit('roundStart', { round: this.round, spawns, scores: this.scores });
+    for (const p of this.players.values()) spawns[p.id] = this.resetPlayer(p);
+    this.emitAll('roundStart', { round: this.round, spawns, scores: this.scores, kills: this.kills });
+  }
+
+  private onRestart() {
+    for (const k of Object.keys(this.scores)) this.scores[k] = 0;
+    for (const k of Object.keys(this.kills)) this.kills[k] = 0;
+    this.matchOver = false;
+    this.startRound();
   }
 
   // -------------------------------------------------------------------------
@@ -202,15 +317,16 @@ export class Room {
 
     p.lastStateAt = now;
     if (horiz > maxHoriz || !inside) {
-      p.socket.emit('correct', { p: p.pos });
+      p.socket?.emit('correct', { p: p.pos });
       return;
     }
     p.pos = { x: m.p.x, y: m.p.y, z: m.p.z };
     p.yaw = Number(m.yaw) || 0;
     p.pitch = Number(m.pitch) || 0;
     p.crouch = !!m.crouch;
+    p.air = !!m.air;
     p.building = !!m.building;
-    if (m.weapon in WEAPONS) p.weapon = m.weapon;
+    if (isWeaponId(m.weapon)) p.weapon = m.weapon;
   }
 
   // -------------------------------------------------------------------------
@@ -221,9 +337,13 @@ export class Room {
     return add(p.pos, { x: 0, y: p.crouch ? PLAYER.crouchEyeHeight : PLAYER.eyeHeight, z: 0 });
   }
 
+  private structureCollidables() {
+    return [...this.structures.values()].map((s) => ({ id: s.data.id, colliders: s.colliders }));
+  }
+
   private onFire(p: ServerPlayer, m: FireMsg) {
-    const w = WEAPONS[m?.weapon];
-    if (!p.alive || !w || !isVec3(m.origin) || !Array.isArray(m.dirs) || m.dirs.length === 0) return;
+    const w = isWeaponId(m?.weapon) ? WEAPONS[m.weapon] : null;
+    if (this.matchOver || !p.alive || !w || !isVec3(m.origin) || !Array.isArray(m.dirs) || m.dirs.length === 0) return;
 
     // Cadence de tir (tolérance de 15 % pour la gigue réseau).
     const now = Date.now();
@@ -236,7 +356,7 @@ export class Room {
     const targets: HitTarget[] = [...this.players.values()]
       .filter((o) => o.id !== p.id && o.alive)
       .map((o) => ({ id: o.id, feet: o.pos, crouch: o.crouch }));
-    const structures = [...this.structures.values()].map((s) => ({ id: s.data.id, colliders: s.colliders }));
+    const structures = this.structureCollidables();
 
     const playerDamage = new Map<string, { amount: number; headshot: boolean; point: Vec3 }>();
     const structureDamage = new Map<string, number>();
@@ -260,7 +380,10 @@ export class Room {
       }
     }
 
-    p.socket.to(this.id).emit('shot', { shooter: p.id, weapon: w.id, origin: m.origin, ends });
+    const shot = { shooter: p.id, weapon: w.id, origin: m.origin, ends };
+    // Le tireur humain a déjà affiché ses propres effets ; un bot n'a pas de client.
+    if (p.socket) p.socket.to(this.id).emit('shot', shot);
+    else this.emitAll('shot', shot);
     for (const [id, amount] of structureDamage) this.damageStructure(id, amount);
     for (const [id, d] of playerDamage) {
       const target = this.players.get(id);
@@ -275,62 +398,174 @@ export class Room {
     const absorbed = Math.min(target.shield, dmg);
     target.shield -= absorbed;
     target.hp = Math.max(0, target.hp - (dmg - absorbed));
-    attacker.socket.emit('hit', { target: target.id, damage: dmg, headshot, point });
+    attacker.socket?.emit('hit', { target: target.id, damage: dmg, headshot, point });
+    target.socket?.emit('hurt', { from: { ...attacker.pos }, damage: dmg });
+    target.brain?.onDamaged(attacker.pos);
+    if (target.hp > 0) return;
 
-    if (target.hp <= 0) {
-      target.alive = false;
-      this.scores[attacker.id] = (this.scores[attacker.id] ?? 0) + 1;
-      this.io.to(this.id).emit('died', { id: target.id, killer: attacker.id, scores: this.scores });
-      this.restartTimer = setTimeout(() => this.startRound(), ROUND_RESTART_DELAY_MS);
+    target.alive = false;
+    this.kills[attacker.id] = (this.kills[attacker.id] ?? 0) + 1;
+
+    if (target.kind === 'target') {
+      this.emitAll('died', { id: target.id, killer: attacker.id, scores: this.scores, kills: this.kills });
+      this.later(TARGET_RESPAWN_MS, () => this.respawn(target));
+      return;
     }
+    if (this.rules.roundsToWin > 0) {
+      this.scores[attacker.id] = (this.scores[attacker.id] ?? 0) + 1;
+      this.emitAll('died', { id: target.id, killer: attacker.id, scores: this.scores, kills: this.kills });
+      if (this.scores[attacker.id] >= this.rules.roundsToWin) {
+        this.matchOver = true;
+        this.emitAll('matchOver', { winner: attacker.id, scores: this.scores });
+      } else {
+        this.restartTimer = setTimeout(() => this.startRound(), ROUND_RESTART_DELAY_MS);
+      }
+      return;
+    }
+    this.emitAll('died', { id: target.id, killer: attacker.id, scores: this.scores, kills: this.kills });
+    this.later(PLAYER_RESPAWN_MS, () => this.respawn(target));
+  }
+
+  /** Réapparition individuelle (cibles, modes sans manches) : les constructions restent. */
+  private respawn(p: ServerPlayer) {
+    if (!this.players.has(p.id)) return;
+    const spawn = this.resetPlayer(p);
+    this.emitAll('respawn', { id: p.id, spawn });
   }
 
   private damageStructure(id: string, amount: number) {
     const s = this.structures.get(id);
     if (!s) return;
     s.data.hp -= amount;
-    if (s.data.hp <= 0) {
-      this.structures.delete(id);
-      this.io.to(this.id).emit('structureRemoved', { id });
-    } else {
-      this.io.to(this.id).emit('structureUpdated', { id, hp: s.data.hp, edit: s.data.edit });
-    }
+    if (s.data.hp <= 0) this.removeStructure(id, true);
+    else this.emitAll('structureUpdated', { id, hp: s.data.hp, edit: s.data.edit });
+  }
+
+  private removeStructure(id: string, destroyed: boolean) {
+    if (!this.structures.delete(id)) return;
+    this.merged = null;
+    this.emitAll('structureRemoved', { id, destroyed });
   }
 
   // -------------------------------------------------------------------------
-  // Construction & édition
+  // Construction, édition, destruction
   // -------------------------------------------------------------------------
 
-  private onBuild(p: ServerPlayer, raw: unknown) {
-    if (!isValidSpecShape(raw)) return;
+  /** Validation commune aux joueurs et aux bots. */
+  private placeStructure(p: ServerPlayer, raw: unknown): boolean {
+    if (!isValidSpecShape(raw)) return false;
     const spec = normalizeSpec(raw);
     const key = structureKey(spec);
-    const reject = () => p.socket.emit('buildRejected', { id: key });
-
-    if (!p.alive || this.structures.has(key) || !isSpecInBounds(spec, this.arena.halfSize)) return reject();
-    if (!this.unlimited && p.materials < BUILD_COST) return reject();
-    if (distance(structureCenter(spec), this.eye(p)) > BUILD_MAX_DISTANCE) return reject();
+    if (this.matchOver || !p.alive || this.structures.has(key) || !isSpecInBounds(spec, this.arena.halfSize)) return false;
+    if (!this.unlimited && p.materials < BUILD_COST) return false;
+    if (distance(structureCenter(spec), this.eye(p)) > BUILD_MAX_DISTANCE) return false;
 
     const maxHp = STRUCTURE_MAX_HP[spec.type];
-    const data: Structure = { ...spec, id: key, hp: maxHp, maxHp, owner: p.id, edit: 'none' };
+    const data: Structure = { ...spec, id: key, hp: maxHp, maxHp, owner: p.id, edit: 0 };
     this.structures.set(key, { data, colliders: structureColliders(data) });
+    this.merged = null;
     if (!this.unlimited) p.materials -= BUILD_COST;
-    this.io.to(this.id).emit('structureAdded', data);
+    this.emitAll('structureAdded', data);
+    return true;
+  }
+
+  private onBuild(p: ServerPlayer, raw: unknown) {
+    if (!this.placeStructure(p, raw)) {
+      const key = isValidSpecShape(raw) ? structureKey(normalizeSpec(raw)) : '';
+      p.socket?.emit('buildRejected', { id: key });
+    }
+  }
+
+  private canModify(p: ServerPlayer, s: ServerStructure) {
+    return s.data.owner === p.id || this.unlimited;
   }
 
   private onEdit(p: ServerPlayer, m: EditMsg) {
     const s = this.structures.get(m?.id);
-    if (!s || s.data.type !== 'wall' || s.data.owner !== p.id || !WALL_EDIT_CYCLE.includes(m.edit)) return;
+    if (!s || s.data.type !== 'wall' || !this.canModify(p, s) || !isValidEdit(m.edit)) return;
     s.data.edit = m.edit;
     s.colliders = structureColliders(s.data);
-    this.io.to(this.id).emit('structureUpdated', { id: s.data.id, hp: s.data.hp, edit: s.data.edit });
+    this.merged = null;
+    this.emitAll('structureUpdated', { id: s.data.id, hp: s.data.hp, edit: s.data.edit });
+  }
+
+  private onDemolish(p: ServerPlayer, m: { id: string }) {
+    const s = this.structures.get(m?.id);
+    if (!s || !p.alive || !this.canModify(p, s)) return;
+    this.removeStructure(s.data.id, true);
   }
 
   // -------------------------------------------------------------------------
+  // Simulation : bots, cibles mobiles, diffusion de l'état
+  // -------------------------------------------------------------------------
+
+  private colliders(): Colliders {
+    if (!this.merged) {
+      this.merged = mergeColliders(emptyColliders(), this.arena.colliders);
+      for (const s of this.structures.values()) mergeColliders(this.merged, s.colliders);
+    }
+    return this.merged;
+  }
+
+  private botWorld(bot: ServerPlayer): BotWorld {
+    return {
+      halfSize: this.arena.halfSize,
+      colliders: () => this.colliders(),
+      lineOfSight: (from, to) => {
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const dz = to.z - from.z;
+        const len = Math.hypot(dx, dy, dz) || 1;
+        const hit = raycastWorld(from, { x: dx / len, y: dy / len, z: dz / len }, len, this.arena.colliders, this.structureCollidables(), []);
+        return hit && hit.t < len - 0.2 ? { clear: false, structureId: hit.structureId, t: hit.t } : { clear: true, t: len };
+      },
+      getStructure: (key) => this.structures.get(key)?.data,
+      build: (spec: StructureSpec) => this.placeStructure(bot, spec),
+      fire: (weapon, origin, dirs) => this.onFire(bot, { weapon, origin, dirs }),
+      materials: () => (this.unlimited ? Infinity : bot.materials),
+    };
+  }
+
+  private updateBots(dt: number) {
+    this.botAcc = Math.min(this.botAcc + dt, 0.25);
+    while (this.botAcc >= BOT_STEP) {
+      this.botAcc -= BOT_STEP;
+      for (const p of this.players.values()) {
+        if (!p.brain || !p.alive) continue;
+        const enemy = [...this.players.values()].find((o) => o.kind === 'player' && o.alive && !this.matchOver);
+        p.brain.update(BOT_STEP, enemy ? { id: enemy.id, pos: enemy.pos, crouch: enemy.crouch, alive: enemy.alive } : null, this.botWorld(p));
+        p.yaw = p.brain.yaw;
+        p.pitch = p.brain.pitch;
+        p.weapon = p.brain.weapon;
+        p.building = p.brain.building;
+        p.air = !p.brain.motor.grounded;
+        p.crouch = p.brain.motor.crouching;
+      }
+    }
+  }
+
+  private updateTargets() {
+    for (const p of this.players.values()) {
+      const t = p.target;
+      if (!t || !p.alive || !t.move) continue;
+      p.pos.x = t.x + Math.sin(this.time * (5 / t.move) + t.z) * t.move;
+    }
+  }
+
+  /** Après une pause (mode local) : pas de rattrapage du temps écoulé. */
+  resetClock() {
+    this.lastTick = Date.now();
+  }
 
   tick() {
-    if (this.players.size === 0) return;
-    this.io.to(this.id).emit('snapshot', { players: [...this.players.values()].map(toPublic) });
+    const now = Date.now();
+    const dt = Math.min(0.25, (now - this.lastTick) / 1000);
+    this.lastTick = now;
+    this.time += dt;
+    if (this.humanCount === 0) return;
+    this.updateBots(dt);
+    this.updateTargets();
+    this.emitAll('snapshot', { players: [...this.players.values()].map(toPublic) });
   }
 }
 
@@ -338,10 +573,12 @@ function toPublic(p: ServerPlayer): PublicPlayer {
   return {
     id: p.id,
     name: p.name,
-    p: p.pos,
+    kind: p.kind,
+    p: { x: p.pos.x, y: p.pos.y, z: p.pos.z },
     yaw: p.yaw,
     pitch: p.pitch,
     crouch: p.crouch,
+    air: p.air,
     weapon: p.weapon,
     building: p.building,
     hp: p.hp,

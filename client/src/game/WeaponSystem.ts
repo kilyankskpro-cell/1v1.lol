@@ -11,6 +11,7 @@ import { PLAYER } from '@shared/constants';
 import type { FireMsg } from '@shared/protocol';
 import type { HitTarget } from '@shared/raycast';
 import { WEAPONS, WEAPON_ORDER, type WeaponDef, type WeaponId } from '@shared/weapons';
+import { audio, type SoundId } from './Audio';
 import type { Avatar } from './Avatar';
 import type { Effects } from './Effects';
 import type { PlayerController } from './PlayerController';
@@ -39,7 +40,7 @@ interface Ammo {
 const IMPACT_COLORS = { player: 0xff3030, structure: 0xffb347, static: 0xdddddd } as const;
 
 export class WeaponSystem {
-  current: WeaponId = 'pickaxe';
+  current: WeaponId = 'ar';
   /** Dispersion courante (radians) — sert au réticule dynamique. */
   spread = 0;
   private ammo = {} as Record<WeaponId, Ammo>;
@@ -59,6 +60,11 @@ export class WeaponSystem {
 
   get isReloading() {
     return this.reloadLeft > 0;
+  }
+
+  /** Progression du rechargement (0..1), null s'il n'y en a pas. */
+  get reloadProgress(): number | null {
+    return this.reloadLeft > 0 ? 1 - this.reloadLeft / this.def.reloadTime : null;
   }
 
   resetAmmo(unlimited: boolean) {
@@ -85,6 +91,7 @@ export class WeaponSystem {
     if (w.magSize === 0 || this.reloadLeft > 0 || a.mag >= w.magSize) return;
     if (!this.unlimited && a.reserve <= 0) return;
     this.reloadLeft = w.reloadTime;
+    audio.play('reload');
   }
 
   ammoText(id: WeaponId) {
@@ -111,6 +118,10 @@ export class WeaponSystem {
     }
     const a = this.ammo[this.current];
     if (w.magSize > 0 && a.mag <= 0) {
+      if (!this.unlimited && a.reserve <= 0) {
+        if (trigger.pressed) audio.play('empty');
+        return;
+      }
       this.reload();
       return;
     }
@@ -159,6 +170,7 @@ export class WeaponSystem {
     }
     if (w.melee) this.ctx.avatar.swing();
     else this.ctx.effects.muzzleFlash(muzzle);
+    audio.play(w.id as SoundId);
 
     this.ctx.sendFire({
       weapon: w.id,

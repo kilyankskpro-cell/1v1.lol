@@ -16,10 +16,21 @@ import { emptyColliders, type Colliders, type Rot } from './geometry';
 import type { Vec3 } from './math';
 
 export type StructureType = 'wall' | 'floor' | 'ramp' | 'roof';
-export type WallEdit = 'none' | 'door' | 'window';
+/**
+ * Édition d'un mur sur une grille 3×3 : masque de 9 bits, bit (row*3 + col) à 1 = case retirée.
+ * row 0 = rangée du bas, col 0 = côté u minimal (x pour rot 0, z pour rot 1).
+ * Ex. porte = cases 1 et 4 retirées (bas + milieu, colonne centrale).
+ */
+export type WallEdit = number;
 
 export const STRUCTURE_TYPES: StructureType[] = ['wall', 'floor', 'ramp', 'roof'];
-export const WALL_EDIT_CYCLE: WallEdit[] = ['none', 'door', 'window'];
+export const EDIT_GRID = 3;
+export const FULL_EDIT_MASK = (1 << (EDIT_GRID * EDIT_GRID)) - 1;
+export const STRUCTURE_LABELS: Record<StructureType, string> = { wall: 'Mur', floor: 'Sol', ramp: 'Rampe', roof: 'Toit' };
+
+/** Un mur doit garder au moins une case. */
+export const isValidEdit = (m: unknown): m is WallEdit =>
+  typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < FULL_EDIT_MASK;
 
 export const STRUCTURE_MAX_HP: Record<StructureType, number> = {
   wall: 150,
@@ -65,22 +76,24 @@ export function structureKey(spec: StructureSpec): string {
 
 /**
  * Panneaux d'un mur en coordonnées locales [u0, u1, v0, v1] (u horizontal, v vertical, 0..GRID).
- * Une édition = un trou (porte / fenêtre) obtenu en découpant le mur en plusieurs boîtes.
+ * Les cases pleines contiguës d'une même rangée sont fusionnées en une seule boîte.
  */
-const WALL_PANELS: Record<WallEdit, [number, number, number, number][]> = {
-  none: [[0, GRID, 0, GRID]],
-  door: [
-    [0, 1.3, 0, GRID],
-    [2.7, GRID, 0, GRID],
-    [1.3, 2.7, 2.8, GRID],
-  ],
-  window: [
-    [0, 1.2, 0, GRID],
-    [2.8, GRID, 0, GRID],
-    [1.2, 2.8, 0, 1.4],
-    [1.2, 2.8, 2.8, GRID],
-  ],
-};
+function wallPanels(mask: WallEdit): [number, number, number, number][] {
+  const t = GRID / EDIT_GRID;
+  const out: [number, number, number, number][] = [];
+  for (let row = 0; row < EDIT_GRID; row++) {
+    let start = -1;
+    for (let col = 0; col <= EDIT_GRID; col++) {
+      const solid = col < EDIT_GRID && !(mask & (1 << (row * EDIT_GRID + col)));
+      if (solid && start < 0) start = col;
+      if (!solid && start >= 0) {
+        out.push([start * t, col * t, row * t, (row + 1) * t]);
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
 
 /** Géométrie de collision d'une pièce (sert aussi à générer son mesh). */
 export function structureColliders(s: StructureSpec & { edit?: WallEdit }): Colliders {
@@ -92,7 +105,7 @@ export function structureColliders(s: StructureSpec & { edit?: WallEdit }): Coll
 
   switch (s.type) {
     case 'wall':
-      for (const [u0, u1, v0, v1] of WALL_PANELS[s.edit ?? 'none']) {
+      for (const [u0, u1, v0, v1] of wallPanels(s.edit ?? 0)) {
         c.boxes.push(
           s.rot % 2 === 0
             ? { min: { x: x0 + u0, y: y0 + v0, z: z0 - ht }, max: { x: x0 + u1, y: y0 + v1, z: z0 + ht } }

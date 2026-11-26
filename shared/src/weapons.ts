@@ -1,5 +1,5 @@
-/** Caractéristiques des 4 équipements. Le serveur s'en sert pour valider les tirs. */
-export type WeaponId = 'pickaxe' | 'shotgun' | 'ar' | 'sniper';
+/** Caractéristiques des équipements. Le serveur s'en sert pour valider les tirs. */
+export type WeaponId = 'ar' | 'shotgun' | 'pistol' | 'pickaxe' | 'sniper';
 
 export interface WeaponDef {
   id: WeaponId;
@@ -35,14 +35,15 @@ export interface WeaponDef {
   melee: boolean;
 }
 
-export const WEAPON_ORDER: WeaponId[] = ['pickaxe', 'shotgun', 'ar', 'sniper'];
+/** Ordre de l'inventaire : touche 1 = fusil d'assaut, 2 = pompe, 3 = pistolet, 4 = pioche, 5 = sniper. */
+export const WEAPON_ORDER: WeaponId[] = ['ar', 'shotgun', 'pistol', 'pickaxe', 'sniper'];
 
 export const WEAPONS: Record<WeaponId, WeaponDef> = {
-  pickaxe: {
-    id: 'pickaxe', name: 'Pioche', damage: 20, structureDamage: 75, headshotMult: 1,
-    fireInterval: 0.45, automatic: true, pellets: 1, spreadHip: 0, spreadAim: 0,
-    bloomPerShot: 0, bloomMax: 0, bloomRecover: 1, range: 3.2, falloffStart: 999, minFalloff: 1,
-    magSize: 0, reserve: 0, reloadTime: 0, recoil: 0, aimFov: 75, melee: true,
+  ar: {
+    id: 'ar', name: "Fusil d'assaut", damage: 30, structureDamage: 40, headshotMult: 2,
+    fireInterval: 0.18, automatic: true, pellets: 1, spreadHip: 0.035, spreadAim: 0.01,
+    bloomPerShot: 0.006, bloomMax: 0.04, bloomRecover: 0.1, range: 150, falloffStart: 50, minFalloff: 0.6,
+    magSize: 30, reserve: 150, reloadTime: 2.2, recoil: 0.012, aimFov: 55, melee: false,
   },
   shotgun: {
     id: 'shotgun', name: 'Fusil à pompe', damage: 9.5, structureDamage: 7, headshotMult: 2,
@@ -50,11 +51,17 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     bloomPerShot: 0, bloomMax: 0, bloomRecover: 1, range: 40, falloffStart: 8, minFalloff: 0.3,
     magSize: 5, reserve: 30, reloadTime: 2.5, recoil: 0.06, aimFov: 62, melee: false,
   },
-  ar: {
-    id: 'ar', name: "Fusil d'assaut", damage: 30, structureDamage: 40, headshotMult: 2,
-    fireInterval: 0.18, automatic: true, pellets: 1, spreadHip: 0.035, spreadAim: 0.01,
-    bloomPerShot: 0.006, bloomMax: 0.04, bloomRecover: 0.1, range: 150, falloffStart: 50, minFalloff: 0.6,
-    magSize: 30, reserve: 150, reloadTime: 2.2, recoil: 0.012, aimFov: 55, melee: false,
+  pistol: {
+    id: 'pistol', name: 'Pistolet', damage: 24, structureDamage: 25, headshotMult: 2,
+    fireInterval: 0.22, automatic: false, pellets: 1, spreadHip: 0.028, spreadAim: 0.012,
+    bloomPerShot: 0.008, bloomMax: 0.035, bloomRecover: 0.12, range: 80, falloffStart: 25, minFalloff: 0.5,
+    magSize: 16, reserve: 96, reloadTime: 1.4, recoil: 0.02, aimFov: 62, melee: false,
+  },
+  pickaxe: {
+    id: 'pickaxe', name: 'Pioche', damage: 20, structureDamage: 75, headshotMult: 1,
+    fireInterval: 0.45, automatic: true, pellets: 1, spreadHip: 0, spreadAim: 0,
+    bloomPerShot: 0, bloomMax: 0, bloomRecover: 1, range: 3.2, falloffStart: 999, minFalloff: 1,
+    magSize: 0, reserve: 0, reloadTime: 0, recoil: 0, aimFov: 75, melee: true,
   },
   sniper: {
     id: 'sniper', name: 'Sniper', damage: 105, structureDamage: 100, headshotMult: 2,
@@ -63,6 +70,8 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     magSize: 1, reserve: 15, reloadTime: 1.4, recoil: 0.06, aimFov: 18, melee: false,
   },
 };
+
+export const isWeaponId = (v: unknown): v is WeaponId => typeof v === 'string' && v in WEAPONS;
 
 /** Coefficient de dégâts selon la distance (1 = plein dégâts). */
 export function damageFalloff(w: WeaponDef, dist: number): number {

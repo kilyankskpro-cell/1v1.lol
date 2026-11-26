@@ -10,7 +10,7 @@ import { box, flat, limb, v3 } from './MeshUtil';
 import { SwingTrail } from './SwingTrail';
 import { makeWeaponModel, type WeaponModel } from './WeaponModels';
 
-export type AvatarLook = 'barbarian' | 'agent';
+export type AvatarLook = 'barbarian' | 'agent' | 'dummy';
 
 interface Look {
   skin: number;
@@ -52,6 +52,20 @@ const LOOKS: Record<AvatarLook, Look> = {
     style: 'short',
     shirt: 0xd8d8d8,
   },
+  // Mannequin d'entraînement : orange et blanc, bien visible.
+  dummy: {
+    skin: 0xf2efe8,
+    hair: 0xff7a1a,
+    top: 0xff7a1a,
+    sleeve: 0xf2efe8,
+    bracer: 0xff7a1a,
+    pants: 0x3a3f4a,
+    legs: 0xf2efe8,
+    shoes: 0x3a3f4a,
+    belt: 0xff7a1a,
+    style: 'short',
+    shirt: 0xffffff,
+  },
 };
 
 const CHEST_Y = 1.38;
@@ -76,7 +90,14 @@ export class Avatar {
   private swingT = 0;
   private walkPhase = 0;
   private walkK = 0;
+  private runK = 0;
+  private airK = 0;
+  private air = false;
+  private vy = 0;
+  private squash = 0;
+  private crouchScale = 1;
   private lastPos = new THREE.Vector3();
+  private hasLastPos = false;
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
 
@@ -173,6 +194,8 @@ export class Avatar {
       if (id === 'pickaxe') {
         model.obj.position.set(0.14, -0.42, -0.36);
         model.obj.rotation.set(-0.25, 0, 0.4);
+      } else if (id === 'pistol') {
+        model.obj.position.set(0.1, -0.1, -0.46);
       } else {
         model.obj.position.set(0.17, -0.2, -0.24);
       }
@@ -208,7 +231,18 @@ export class Avatar {
   }
 
   setCrouch(crouch: boolean) {
-    this.body.scale.y = crouch ? PLAYER.crouchHeight / PLAYER.height : 1;
+    this.crouchScale = crouch ? PLAYER.crouchHeight / PLAYER.height : 1;
+  }
+
+  /** En l'air (saut / chute) : pose dédiée ; à l'atterrissage, léger écrasement. */
+  setAir(air: boolean) {
+    if (this.air && !air) this.squash = 0.12;
+    this.air = air;
+  }
+
+  /** Téléportation : pas d'animation de course à travers la carte. */
+  resetMotion() {
+    this.hasLastPos = false;
   }
 
   /** pitch > 0 = regarde vers le haut (Rx positif relève l'axe -Z). */
@@ -226,16 +260,41 @@ export class Avatar {
     this.trail.update(dt);
   }
 
-  /** Vitesse déduite du déplacement réel : fonctionne pour le joueur local comme pour l'adversaire interpolé. */
+  /**
+   * Marche / course / saut / chute. La vitesse est déduite du déplacement réel :
+   * fonctionne pour le joueur local comme pour l'adversaire interpolé.
+   */
   private animateWalk(dt: number) {
     const p = this.group.position;
+    if (!this.hasLastPos) {
+      this.lastPos.copy(p);
+      this.hasLastPos = true;
+    }
     const speed = dt > 0 ? Math.min(Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.z) / dt, 12) : 0;
+    const vy = dt > 0 ? (p.y - this.lastPos.y) / dt : 0;
+    this.vy += (vy - this.vy) * Math.min(1, dt * 12);
     this.lastPos.copy(p);
-    this.walkK += (Math.min(speed / PLAYER.walkSpeed, 1) - this.walkK) * Math.min(1, dt * 10);
-    this.walkPhase += dt * (5 + speed * 0.9);
-    const a = Math.sin(this.walkPhase) * 0.7 * this.walkK;
-    this.legs[0].rotation.x = a;
-    this.legs[1].rotation.x = -a;
+    const blend = Math.min(1, dt * 10);
+    this.walkK += (Math.min(speed / PLAYER.walkSpeed, 1) - this.walkK) * blend;
+    this.runK += ((speed > PLAYER.walkSpeed + 1 ? 1 : 0) - this.runK) * blend;
+    this.airK += ((this.air ? 1 : 0) - this.airK) * Math.min(1, dt * 14);
+    this.walkPhase += dt * (5 + speed * 0.95);
+
+    // Foulée : plus ample en course.
+    const amp = (0.65 + this.runK * 0.35) * this.walkK * (1 - this.airK);
+    const stride = Math.sin(this.walkPhase) * amp;
+    // En l'air : jambe avant repliée en montée, jambes écartées en chute.
+    const falling = this.vy < -2 ? 1 : 0;
+    const airFront = 0.75 - falling * 0.4;
+    const airBack = -0.35 + falling * 0.05;
+    this.legs[0].rotation.x = stride + airFront * this.airK;
+    this.legs[1].rotation.x = -stride + airBack * this.airK;
+
+    // Buste penché en avant en course, rebond vertical à chaque pas.
+    this.body.rotation.x = -0.14 * this.runK * (1 - this.airK);
+    this.body.position.y = Math.abs(Math.sin(this.walkPhase)) * 0.05 * this.walkK * (1 - this.airK);
+    this.squash = Math.max(0, this.squash - dt);
+    this.body.scale.y = this.crouchScale * (1 - this.squash * 0.9);
   }
 
   private animateSwing(dt: number) {
