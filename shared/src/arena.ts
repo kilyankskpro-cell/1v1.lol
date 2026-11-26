@@ -1,6 +1,7 @@
 /**
  * Définition des cartes :
- *  - duel      : arène fermée 64x64, deux spawns opposés séparés par une rampe centrale.
+ *  - duel      : plateforme 64x64 dans l'espace (bords bloqués par des murs invisibles),
+ *                deux spawns opposés séparés par une double rampe en V.
  *  - justbuild : grand terrain plat pour s'entraîner à construire.
  */
 import { emptyColliders, type Colliders } from './geometry';
@@ -38,18 +39,11 @@ export function createArena(mode: GameMode): ArenaDef {
   c.boxes.push({ min: { x: h, y: 0, z: -h }, max: { x: h + 1, y: wallHeight, z: h } });
 
   if (mode === 'duel') {
-    // Rampe centrale : un bloc plein avec une pente de chaque côté.
-    c.boxes.push({ min: { x: -8, y: 0, z: -3 }, max: { x: 8, y: 4, z: 3 } });
-    c.slopes.push({ minX: -8, maxX: 8, minZ: -7, maxZ: -3, y: 0, h: 4, dir: 0 });
-    c.slopes.push({ minX: -8, maxX: 8, minZ: 3, maxZ: 7, y: 0, h: 4, dir: 2 });
-    // Petits blocs de couverture près de chaque spawn.
-    for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) {
-        const cx = sx * 18;
-        const cz = sz * 16;
-        c.boxes.push({ min: { x: cx - 2, y: 0, z: cz - 1 }, max: { x: cx + 2, y: 2, z: cz + 1 } });
-      }
-    }
+    // Double rampe en V au centre : deux pentes qui partent du sol et montent vers ±X.
+    c.slopes.push({ minX: -14, maxX: 0, minZ: -3, maxZ: 3, y: 0, h: 7, dir: 3 });
+    c.slopes.push({ minX: 0, maxX: 14, minZ: -3, maxZ: 3, y: 0, h: 7, dir: 1 });
+    // Caisse métallique sur le côté, à égale distance des deux spawns.
+    c.boxes.push({ min: { x: 21, y: 0, z: -1.5 }, max: { x: 24, y: 2.4, z: 1.5 } });
     return {
       mode,
       halfSize,

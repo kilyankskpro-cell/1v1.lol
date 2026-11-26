@@ -4,12 +4,12 @@
  */
 import * as THREE from 'three';
 import type { ArenaDef } from '@shared/arena';
-import { GRID } from '@shared/constants';
 import { emptyColliders, mergeColliders, rayColliders, type Colliders } from '@shared/geometry';
 import type { Vec3 } from '@shared/math';
 import { raycastWorld, type HitTarget, type RayHit, type StructureCollidable } from '@shared/raycast';
 import { structureColliders, type Structure, type WallEdit } from '@shared/structures';
 import { buildColliderMeshes, buildStructureObject, disposeObject } from './StructureMesh';
+import { CRATE_MAT, buildRamps, metalFloorTexture, spaceSkyTexture } from './SpaceTheme';
 
 const WOOD = new THREE.Color(0xd9a066);
 const WOOD_DAMAGED = new THREE.Color(0x5e3a1c);
@@ -42,12 +42,12 @@ export class World {
 
   private buildEnvironment() {
     const scene = this.scene;
-    scene.background = new THREE.Color(0x8ec9ff);
-    scene.fog = new THREE.Fog(0x8ec9ff, 80, 260);
+    scene.background = spaceSkyTexture();
+    scene.fog = new THREE.Fog(0x07060f, 140, 420);
 
-    scene.add(new THREE.HemisphereLight(0xdff1ff, 0x4a5a3a, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-    sun.position.set(30, 60, 20);
+    scene.add(new THREE.HemisphereLight(0xb9c4ff, 0x2a2633, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+    sun.position.set(-40, 35, 25);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const s = this.arena.halfSize + 8;
@@ -55,21 +55,18 @@ export class World {
     scene.add(sun);
 
     const [ground, ...rest] = this.arena.colliders.boxes;
-    // Sol : damier aligné sur la grille de construction (repère visuel des cellules).
-    const groundMat = new THREE.MeshStandardMaterial({ map: checkerTexture(this.arena.halfSize), roughness: 1 });
+    // Sol : plaques métalliques alignées sur la grille de construction.
+    const groundMat = new THREE.MeshStandardMaterial({
+      map: metalFloorTexture(this.arena.halfSize),
+      roughness: 0.8,
+      metalness: 0.3,
+    });
     scene.add(buildColliderMeshes({ boxes: [ground], slopes: [], pyramids: [] }, groundMat, false));
 
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x55607a, roughness: 0.9 });
-    const decorMat = new THREE.MeshStandardMaterial({ color: 0x8a93a8, roughness: 0.8 });
+    // Les murs d'enceinte restent des colliders invisibles : la plateforme paraît ouverte sur l'espace.
     const isBoundary = (b: (typeof rest)[number]) => b.max.y - b.min.y >= this.arena.wallHeight - 0.01;
-    scene.add(buildColliderMeshes({ boxes: rest.filter(isBoundary), slopes: [], pyramids: [] }, wallMat, false));
-    scene.add(
-      buildColliderMeshes(
-        { boxes: rest.filter((b) => !isBoundary(b)), slopes: this.arena.colliders.slopes, pyramids: [] },
-        decorMat,
-        true,
-      ),
-    );
+    scene.add(buildColliderMeshes({ boxes: rest.filter((b) => !isBoundary(b)), slopes: [], pyramids: [] }, CRATE_MAT, true));
+    scene.add(buildRamps(this.arena.colliders.slopes));
   }
 
   // -------------------------------------------------------------------------
@@ -192,24 +189,4 @@ export class World {
   raycastGeometry(o: Vec3, d: Vec3, maxT: number): number | null {
     return rayColliders(o, d, maxT, this.getColliders());
   }
-}
-
-function checkerTexture(halfSize: number) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#6fae55';
-  ctx.fillRect(0, 0, 64, 64);
-  ctx.fillStyle = '#66a34e';
-  ctx.fillRect(0, 0, 32, 32);
-  ctx.fillRect(32, 32, 32, 32);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = THREE.NearestFilter;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  // Une case du damier = une cellule de grille. Le sol déborde d'1 unité de chaque côté.
-  const cells = (halfSize * 2 + 2) / GRID / 2;
-  tex.repeat.set(cells, cells);
-  tex.offset.set(-1 / (2 * GRID), -1 / (2 * GRID));
-  return tex;
 }
