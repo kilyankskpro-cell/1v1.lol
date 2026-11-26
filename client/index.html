@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Build Fight — Duel TPS &amp; construction</title>
+  </head>
+  <body>
+    <div id="game-root"></div>
+
+    <!-- ===================== HUD ===================== -->
+    <div id="hud" class="hidden">
+      <div id="crosshair">
+        <span class="ch top"></span><span class="ch bottom"></span>
+        <span class="ch left"></span><span class="ch right"></span>
+        <span class="ch dot"></span>
+      </div>
+      <div id="hitmarker"></div>
+      <div id="damage-dirs"></div>
+      <div id="scope" class="hidden"></div>
+      <div id="damage-flash"></div>
+      <div id="top-left">
+        <div id="net-stats"><span id="fps">FPS: --</span><span id="ping">Ping: -- ms</span></div>
+        <canvas id="minimap" width="150" height="150"></canvas>
+      </div>
+      <div id="topbar"><span id="mode-label"></span><span id="score"></span><span id="kills">⚔ 0</span></div>
+      <div id="target-info" class="hidden">
+        <div id="target-label"></div>
+        <div class="tbar"><div id="target-shield" class="tfill shield"></div></div>
+        <div class="tbar"><div id="target-fill" class="tfill"></div></div>
+      </div>
+      <div id="center-message"></div>
+      <div id="edit-hint"></div>
+      <div id="damage-numbers"></div>
+
+      <div id="bottom-left">
+        <div class="vital"><span class="ico shield">⛨</span><span id="shield-text" class="num"></span><div class="bar"><div id="shield-fill" class="fill shield"></div></div></div>
+        <div class="vital"><span class="ico health">✚</span><span id="health-text" class="num"></span><div class="bar"><div id="health-fill" class="fill health"></div></div></div>
+        <div id="keys-hint"></div>
+      </div>
+
+      <div id="bottom-right">
+        <div id="ammo-panel">
+          <div id="weapon-name"></div>
+          <div id="ammo-count"></div>
+          <div id="reload-bar" class="hidden"><div id="reload-fill"></div></div>
+        </div>
+        <div id="weapon-slots" class="slots"></div>
+        <div class="build-row"><div id="materials"></div><div id="build-slots" class="slots"></div></div>
+      </div>
+
+      <div id="lock-hint">Cliquez pour jouer</div>
+    </div>
+
+    <!-- ===================== Menu principal ===================== -->
+    <div id="main-menu" class="screen">
+      <div class="logo">
+        <svg viewBox="0 0 120 120" class="logo-mark" aria-hidden="true">
+          <path d="M10 100 L60 20 L110 100 Z" fill="#ffb02e" />
+          <path d="M34 100 L60 58 L86 100 Z" fill="#1a2140" />
+          <rect x="52" y="74" width="16" height="26" fill="#3aa0ff" />
+        </svg>
+        <h1>BUILD<span>FIGHT</span></h1>
+        <p class="tagline">Tire. Construis. Domine.</p>
+      </div>
+      <input id="name-input" maxlength="16" placeholder="Votre pseudo" />
+      <div class="menu-col">
+        <button id="btn-play" class="primary big">Jouer</button>
+        <button data-start="training">Entraînement</button>
+        <button data-start="freebuild">Free Build</button>
+        <button id="btn-settings" class="ghost">Paramètres</button>
+      </div>
+      <table class="controls">
+        <tr><td>Z Q S D</td><td>Déplacement</td><td>Espace / Shift</td><td>Sauter / Courir</td></tr>
+        <tr><td>Clic gauche</td><td>Tirer / Construire</td><td>Clic droit</td><td>Viser</td></tr>
+        <tr><td>F · C · V · T</td><td>Mur · Sol · Rampe · Toit</td><td>G / X</td><td>Modifier / Détruire</td></tr>
+        <tr><td>1 · 2 · 3 · 4 · 5</td><td>Fusil · Pompe · Pistolet · Pioche · Sniper</td><td>R / Échap</td><td>Recharger / Pause</td></tr>
+      </table>
+      <p class="hint">Toutes les touches sont modifiables dans les Paramètres.</p>
+    </div>
+
+    <!-- ===================== Choix du mode ===================== -->
+    <div id="mode-menu" class="screen hidden">
+      <h2>Choisir un mode</h2>
+      <div class="mode-cards">
+        <div class="mode-card featured">
+          <h3>1 contre 1 — Bot</h3>
+          <p>Duel en manches contre une IA qui tire, se couvre et construit. Premier à 5 manches.</p>
+          <div class="diff">
+            <button data-start="bot" data-difficulty="easy">Facile</button>
+            <button data-start="bot" data-difficulty="normal" class="primary">Normal</button>
+            <button data-start="bot" data-difficulty="hard" class="danger">Difficile</button>
+          </div>
+        </div>
+        <div class="mode-card">
+          <h3>Duel en ligne</h3>
+          <p>Affrontez un autre joueur (ouvrez un 2ᵉ onglet pour tester). Sans serveur : entraînement solo.</p>
+          <button data-start="duel">Rejoindre</button>
+        </div>
+        <div class="mode-card">
+          <h3>Entraînement</h3>
+          <p>Cibles fixes et mobiles, constructions et munitions illimitées, réapparition automatique.</p>
+          <button data-start="training">Lancer</button>
+        </div>
+        <div class="mode-card">
+          <h3>Free Build</h3>
+          <p>Aucun ennemi, matériaux illimités : construisez, modifiez et détruisez librement.</p>
+          <button data-start="freebuild">Lancer</button>
+        </div>
+      </div>
+      <button id="btn-back" class="ghost">Retour</button>
+    </div>
+
+    <!-- ===================== Overlays ===================== -->
+    <div id="loading" class="screen overlay hidden"><div class="spinner"></div></div>
+
+    <div id="pause-menu" class="screen overlay hidden">
+      <div class="panel">
+        <h2>Pause</h2>
+        <p id="pause-note" class="hint"></p>
+        <div class="menu-col">
+          <button id="pause-resume" class="primary">Reprendre</button>
+          <button id="pause-restart">Recommencer</button>
+          <button id="pause-settings">Paramètres</button>
+          <button id="pause-menu-btn" class="ghost">Menu principal</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="match-over" class="screen overlay hidden">
+      <div class="panel">
+        <h2 id="match-title"></h2>
+        <p id="match-score"></p>
+        <div class="menu-col">
+          <button id="match-replay" class="primary">Rejouer</button>
+          <button id="match-menu" class="ghost">Menu principal</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="settings-menu" class="screen overlay hidden"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
