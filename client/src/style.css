@@ -60,20 +60,32 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1220; fon
 #damage-numbers .dmg.head { color: #ffd23a; font-size: 24px; }
 @keyframes dmg { from { opacity: 1; transform: translate(20px, -20px); } to { opacity: 0; transform: translate(50px, -70px); } }
 
-#bottom-left { position: absolute; left: 24px; bottom: 24px; width: 280px; display: flex; flex-direction: column; gap: 6px; }
-.bar { position: relative; height: 22px; background: rgba(0,0,0,.55); border-radius: 4px; overflow: hidden; }
-.bar .fill { height: 100%; transition: width .15s; }
-.fill.health { background: linear-gradient(90deg, #2fd35a, #5cf07e); }
-.fill.shield { background: linear-gradient(90deg, #2a7cff, #4fb2ff); }
-.bar span { position: absolute; left: 8px; top: 2px; font-size: 13px; font-weight: 800; text-shadow: 0 1px 2px #000; }
+#top-left { position: absolute; left: 12px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
+#net-stats { display: flex; gap: 6px; }
+#net-stats span { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 3px; background: rgba(20,40,80,.65); color: #cfe6ff; }
+#minimap { width: 150px; height: 150px; border: 3px solid rgba(255,255,255,.85); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
 
-#bottom-right { position: absolute; right: 24px; bottom: 24px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-#materials { font-weight: 800; font-size: 15px; text-shadow: 0 1px 3px #000; }
-.slots { display: flex; gap: 6px; }
-.slot { position: relative; width: 62px; height: 62px; border-radius: 8px; background: rgba(0,0,0,.5); border: 2px solid rgba(255,255,255,.15);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
-.slot svg { width: 30px; height: 30px; }
-.slot .key { position: absolute; top: 2px; left: 5px; font-size: 11px; color: #ffd23a; }
-.slot .sub { margin-top: 2px; }
-.slot.active { border-color: #ffd23a; background: rgba(255,210,58,.22); transform: translateY(-4px); }
-#build-slots .slot.active { border-color: #3aa0ff; background: rgba(58,160,255,.25); }
+#bottom-left { position: absolute; left: 24px; bottom: 26px; width: 330px; display: flex; flex-direction: column; gap: 8px; }
+.vital { display: flex; align-items: center; gap: 8px; }
+.vital .ico { width: 16px; text-align: center; font-size: 14px; text-shadow: 0 1px 2px #000; }
+.vital .ico.shield { color: #cfe3ff; }
+.vital .num { width: 30px; font-size: 14px; font-weight: 800; text-shadow: 0 1px 3px #000; }
+.bar { position: relative; flex: 1; height: 16px; background: rgba(0,0,0,.45); border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+.bar .fill { height: 100%; transition: width .15s; }
+.fill.health { background: linear-gradient(180deg, #7cff5a, #3fd12a); }
+.fill.shield { background: linear-gradient(180deg, #4fa8ff, #1f6fe0); }
+
+#bottom-right { position: absolute; right: 18px; bottom: 18px; display: flex; flex-direction: column; align-items: flex-end; gap: 26px; }
+.build-row { display: flex; align-items: flex-end; gap: 10px; }
+#materials { font-weight: 800; font-size: 14px; text-shadow: 0 1px 3px #000; padding-bottom: 6px; }
+.slots { display: flex; gap: 5px; }
+.slot { position: relative; width: 58px; height: 58px; border-radius: 3px; background: rgba(225,231,243,.82); border: 2px solid rgba(0,0,0,.25);
+  display: flex; align-items: center; justify-content: center; transition: transform .08s; }
+.slot svg { width: 36px; height: 36px; }
+.slot.weapon { background: linear-gradient(155deg, color-mix(in srgb, var(--rarity) 70%, #fff) 0%, var(--rarity) 55%, color-mix(in srgb, var(--rarity) 55%, #000) 100%); }
+.slot.weapon svg { width: 50px; height: 25px; filter: drop-shadow(0 1px 1px rgba(0,0,0,.6)); }
+.slot .key { position: absolute; top: -19px; left: 50%; transform: translateX(-50%); min-width: 16px; padding: 0 4px; font-size: 11px; font-weight: 800;
+  text-align: center; color: #fff; background: rgba(15,20,35,.8); border-radius: 2px; }
+.slot .sub { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 1px 2px #000; }
+.slot.active { border-color: #fff; box-shadow: 0 0 0 2px #fff, 0 0 10px rgba(255,255,255,.5); transform: translateY(-5px); }
+#build-slots .slot.active { border-color: #3aa0ff; box-shadow: 0 0 0 2px #3aa0ff, 0 0 10px rgba(58,160,255,.6); }

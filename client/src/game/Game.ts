@@ -16,6 +16,7 @@ import { BuildSystem } from './BuildSystem';
 import { Effects } from './Effects';
 import { BUILD_KEYS, HUD } from './HUD';
 import { Input } from './Input';
+import { Minimap } from './Minimap';
 import type { GameSocket } from './Network';
 import { NO_INPUT, PlayerController, type MoveInput } from './PlayerController';
 import { RemotePlayer } from './RemotePlayer';
@@ -32,7 +33,7 @@ export class Game {
   private world: World;
   private player = new PlayerController();
   private tpsCam = new ThirdPersonCamera(this.camera);
-  private avatar = new Avatar(0x3a7bff);
+  private avatar = new Avatar('barbarian');
   private effects = new Effects(this.scene);
   private hud = new HUD();
   private build: BuildSystem;
@@ -48,6 +49,9 @@ export class Game {
   private unlimited = false;
   private scores: Record<string, number> = {};
   private sendTimer = 0;
+  private minimap!: Minimap;
+  private fps = { frames: 0, time: 0, value: 0 };
+  private ping: { ms: number | null; timer: number } = { ms: null, timer: 0 };
 
   constructor(
     private container: HTMLElement,
@@ -64,6 +68,7 @@ export class Game {
 
     this.world = new World(this.scene, createArena(mode));
     this.scene.add(this.avatar.group);
+    this.minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, this.world.arena);
 
     this.build = new BuildSystem({
       scene: this.scene,
@@ -300,6 +305,28 @@ export class Game {
     this.hud.setLocked(inp.locked);
     this.hud.setScore(this.scoreText());
     this.hud.update(dt);
+    this.updateStats(dt);
+    this.minimap.update(dt, {
+      self: { x: this.player.pos.x, z: this.player.pos.z, yaw: this.tpsCam.yaw, alive: this.alive },
+      enemies: [...this.remotes.values()].filter((r) => r.alive).map((r) => ({ x: r.feet.x, z: r.feet.z })),
+      structures: this.world.structureData(),
+    });
+  }
+
+  /** FPS (moyenne sur 0,5 s) et ping (aller-retour mesuré toutes les 2 s). */
+  private updateStats(dt: number) {
+    this.fps.frames++;
+    if ((this.fps.time += dt) >= 0.5) {
+      this.fps.value = this.fps.frames / this.fps.time;
+      this.fps.frames = 0;
+      this.fps.time = 0;
+    }
+    if ((this.ping.timer -= dt) <= 0) {
+      this.ping.timer = 2;
+      const sent = performance.now();
+      this.net.emit('latency', () => (this.ping.ms = performance.now() - sent));
+    }
+    this.hud.setStats(this.fps.value, this.ping.ms);
   }
 
   private selectWeapon(apply: () => void) {

@@ -4,6 +4,7 @@
  *                deux spawns opposés séparés par une double rampe en V.
  *  - justbuild : grand terrain plat pour s'entraîner à construire.
  */
+import { GRID } from './constants';
 import { emptyColliders, type Colliders } from './geometry';
 
 export type GameMode = 'duel' | 'justbuild';
@@ -39,9 +40,10 @@ export function createArena(mode: GameMode): ArenaDef {
   c.boxes.push({ min: { x: h, y: 0, z: -h }, max: { x: h + 1, y: wallHeight, z: h } });
 
   if (mode === 'duel') {
-    // Double rampe en V au centre : deux pentes qui partent du sol et montent vers ±X.
-    c.slopes.push({ minX: -14, maxX: 0, minZ: -3, maxZ: 3, y: 0, h: 7, dir: 3 });
-    c.slopes.push({ minX: 0, maxX: 14, minZ: -3, maxZ: 3, y: 0, h: 7, dir: 1 });
+    // Double rampe en V au centre : deux rampes de la taille exacte d'une rampe construite
+    // (une cellule GRID x GRID, montée de GRID), alignées sur la grille, qui montent vers ±X.
+    c.slopes.push({ minX: -GRID, maxX: 0, minZ: -GRID, maxZ: 0, y: 0, h: GRID, dir: 3 });
+    c.slopes.push({ minX: 0, maxX: GRID, minZ: -GRID, maxZ: 0, y: 0, h: GRID, dir: 1 });
     // Caisse métallique sur le côté, à égale distance des deux spawns.
     c.boxes.push({ min: { x: 21, y: 0, z: -1.5 }, max: { x: 24, y: 2.4, z: 1.5 } });
     return {

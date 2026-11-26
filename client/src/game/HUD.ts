@@ -1,7 +1,8 @@
-/** HUD DOM minimaliste : vie, bouclier, pièces de construction, armes, réticule, messages. */
+/** HUD DOM : vie, bouclier, inventaire par rareté, pièces de construction, FPS/ping, réticule, messages. */
 import { MAX_HEALTH, MAX_SHIELD } from '@shared/constants';
 import type { StructureType } from '@shared/structures';
 import { WEAPONS, WEAPON_ORDER, type WeaponId } from '@shared/weapons';
+import { RARITY } from './WeaponModels';
 
 export const BUILD_KEYS: { code: string; type: StructureType; label: string; fallback: string }[] = [
   { code: 'KeyQ', type: 'wall', label: 'Mur', fallback: 'A' },
@@ -10,11 +11,22 @@ export const BUILD_KEYS: { code: string; type: StructureType; label: string; fal
   { code: 'KeyV', type: 'roof', label: 'Toit', fallback: 'V' },
 ];
 
+const PIECE = 'fill="#dfe5f7" stroke="#6b78b8" stroke-width="1.5" stroke-linejoin="round"';
 const ICONS: Record<StructureType, string> = {
-  wall: '<rect x="5" y="4" width="22" height="24" fill="none" stroke="currentColor" stroke-width="3"/>',
-  floor: '<path d="M3 20 L14 13 L29 13 L18 20 Z" fill="none" stroke="currentColor" stroke-width="3"/>',
-  ramp: '<path d="M4 27 L28 5 L28 27 Z" fill="none" stroke="currentColor" stroke-width="3"/>',
-  roof: '<path d="M3 26 L16 6 L29 26 Z M16 6 L16 26" fill="none" stroke="currentColor" stroke-width="3"/>',
+  wall: `<path d="M9 5 L25 3 L25 27 L9 29 Z" ${PIECE}/>`,
+  floor: `<path d="M2 19 L13 11 L30 13 L19 22 Z" ${PIECE}/>`,
+  ramp: `<path d="M3 26 L12 8 L29 9 L22 27 Z" ${PIECE}/>`,
+  roof: `<path d="M3 24 L16 6 L29 24 Z" ${PIECE}/><path d="M16 6 L13 24" stroke="#6b78b8" stroke-width="1.5"/>`,
+};
+
+/** Silhouettes d'armes (viewBox 64x32). */
+const WEAPON_ICONS: Record<WeaponId, string> = {
+  pickaxe:
+    '<path d="M16 29 L42 7" stroke="#2b1a10" stroke-width="4" stroke-linecap="round"/><path d="M28 7 Q46 -1 60 15 Q46 8 33 13 Z" fill="#dfe5ff" stroke="#1d2340" stroke-width="1.2"/>',
+  shotgun: '<path d="M3 15 h38 v-3 h20 v5 h-20 v2 h-9 l-4 8 h-6 l2-8 h-7 l-9 6 h-6 l5-7z" fill="#fff"/>',
+  ar: '<path d="M2 14 h10 v-2 h28 v-4 h7 v4 h15 v4 h-15 v2 h-8 l-2 9 h-5 l1-9 h-6 l-2 6 h-4 v-5 h-8 l-6 5 h-4 l4-6z" fill="#fff"/>',
+  sniper:
+    '<path d="M1 15 h12 v-2 h16 v-4 h14 v4 h-5 v2 h25 v3 h-28 v2 h-7 l-2 7 h-4 l1-7 h-6 l-8 5 h-5 l4-6z" fill="#fff"/>',
 };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -39,8 +51,10 @@ export class HUD {
     const ws = $('weapon-slots');
     WEAPON_ORDER.forEach((id, i) => {
       const el = document.createElement('div');
-      el.className = 'slot';
-      el.innerHTML = `<span class="key">${i + 1}</span><b>${WEAPONS[id].name}</b><span class="sub"></span>`;
+      el.className = 'slot weapon';
+      el.title = WEAPONS[id].name;
+      el.style.setProperty('--rarity', `#${RARITY[id].toString(16).padStart(6, '0')}`);
+      el.innerHTML = `<span class="key">${i + 1}</span><svg viewBox="0 0 64 32">${WEAPON_ICONS[id]}</svg><span class="sub"></span>`;
       ws.appendChild(el);
       this.weaponSlots.set(id, el);
     });
@@ -48,7 +62,8 @@ export class HUD {
     for (const b of BUILD_KEYS) {
       const el = document.createElement('div');
       el.className = 'slot';
-      el.innerHTML = `<span class="key">${b.fallback}</span><svg viewBox="0 0 32 32">${ICONS[b.type]}</svg><span class="sub">${b.label}</span>`;
+      el.innerHTML = `<span class="key">${b.fallback}</span><svg viewBox="0 0 32 32">${ICONS[b.type]}</svg>`;
+      el.title = b.label;
       bs.appendChild(el);
       this.buildSlots.set(b.type, el);
     }
@@ -79,8 +94,13 @@ export class HUD {
   setVitals(hp: number, shield: number) {
     $('health-fill').style.width = `${(hp / MAX_HEALTH) * 100}%`;
     $('shield-fill').style.width = `${(shield / MAX_SHIELD) * 100}%`;
-    $('health-text').textContent = `${Math.ceil(hp)} PV`;
-    $('shield-text').textContent = `${Math.ceil(shield)} Bouclier`;
+    $('health-text').textContent = String(Math.ceil(hp));
+    $('shield-text').textContent = String(Math.ceil(shield));
+  }
+
+  setStats(fps: number, pingMs: number | null) {
+    $('fps').textContent = `FPS: ${Math.round(fps)}`;
+    $('ping').textContent = `Ping: ${pingMs === null ? '--' : Math.round(pingMs)} ms`;
   }
 
   setMaterials(n: number, unlimited: boolean) {

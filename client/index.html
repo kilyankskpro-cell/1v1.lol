@@ -17,20 +17,23 @@
       <div id="hitmarker"></div>
       <div id="scope" class="hidden"></div>
       <div id="damage-flash"></div>
+      <div id="top-left">
+        <div id="net-stats"><span id="fps">FPS: --</span><span id="ping">Ping: -- ms</span></div>
+        <canvas id="minimap" width="150" height="150"></canvas>
+      </div>
       <div id="topbar"><span id="mode-label"></span><span id="score"></span></div>
       <div id="center-message"></div>
       <div id="edit-hint"></div>
       <div id="damage-numbers"></div>
 
       <div id="bottom-left">
-        <div class="bar"><div id="shield-fill" class="fill shield"></div><span id="shield-text"></span></div>
-        <div class="bar"><div id="health-fill" class="fill health"></div><span id="health-text"></span></div>
+        <div class="vital"><span class="ico shield">⛨</span><span id="shield-text" class="num"></span><div class="bar"><div id="shield-fill" class="fill shield"></div></div></div>
+        <div class="vital"><span class="ico health">✚</span><span id="health-text" class="num"></span><div class="bar"><div id="health-fill" class="fill health"></div></div></div>
       </div>
 
       <div id="bottom-right">
-        <div id="materials"></div>
-        <div id="build-slots" class="slots"></div>
         <div id="weapon-slots" class="slots"></div>
+        <div class="build-row"><div id="materials"></div><div id="build-slots" class="slots"></div></div>
       </div>
 
       <div id="lock-hint">Cliquez pour jouer · Échap pour libérer la souris</div>

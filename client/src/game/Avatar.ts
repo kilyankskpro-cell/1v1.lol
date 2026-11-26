@@ -1,59 +1,210 @@
 /**
- * Personnage low-poly (blocs) + armes tenues en main droite.
- * Les proportions correspondent aux hitbox partagées (tête à 1.6 m, hauteur 1.85 m).
+ * Personnage low-poly articulé (jambes, bras coudés, tête) avec deux apparences,
+ * animation de marche, armes tenues à deux mains et coup de pioche avec traînée.
+ * Les proportions correspondent aux hitbox partagées (tête à ~1.6 m, hauteur 1.85 m).
  */
 import * as THREE from 'three';
 import { PLAYER } from '@shared/constants';
 import { WEAPON_ORDER, type WeaponId } from '@shared/weapons';
+import { box, flat, limb, v3 } from './MeshUtil';
+import { SwingTrail } from './SwingTrail';
+import { makeWeaponModel, type WeaponModel } from './WeaponModels';
 
-const box = (w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0) => {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  return m;
+export type AvatarLook = 'barbarian' | 'agent';
+
+interface Look {
+  skin: number;
+  hair: number;
+  top: number;
+  sleeve: number;
+  bracer: number;
+  pants: number;
+  legs: number;
+  shoes: number;
+  belt: number;
+  style: 'spikes' | 'short';
+  shirt?: number;
+}
+
+const LOOKS: Record<AvatarLook, Look> = {
+  barbarian: {
+    skin: 0xc98a55,
+    hair: 0xa3302a,
+    top: 0x5a3426,
+    sleeve: 0xc98a55,
+    bracer: 0x9b2a24,
+    pants: 0x7a4a2e,
+    legs: 0xc98a55,
+    shoes: 0x5a3426,
+    belt: 0x9b2a24,
+    style: 'spikes',
+  },
+  agent: {
+    skin: 0xf0c49a,
+    hair: 0x3b2a1f,
+    top: 0x1e2533,
+    sleeve: 0x1e2533,
+    bracer: 0x1e2533,
+    pants: 0x3c5d8f,
+    legs: 0x3c5d8f,
+    shoes: 0x1a1a1a,
+    belt: 0x2a2a2a,
+    style: 'short',
+    shirt: 0xd8d8d8,
+  },
 };
+
+const CHEST_Y = 1.38;
+const SWING_TIME = 0.36;
+
+interface HeldItem {
+  container: THREE.Group;
+  model: WeaponModel | null;
+}
 
 export class Avatar {
   readonly group = new THREE.Group();
   private body = new THREE.Group();
-  /** Bras droit : pivote avec le pitch pour viser. */
-  private arm = new THREE.Group();
-  private items = new Map<WeaponId, { obj: THREE.Object3D; muzzle: THREE.Object3D }>();
+  /** Haut du corps : pivote avec le pitch pour viser. */
+  private rig = new THREE.Group();
+  /** Pivot du coup de pioche (bras + arme). */
+  private pivot = new THREE.Group();
+  private legs: THREE.Group[] = [];
+  private items = new Map<WeaponId | 'none', HeldItem>();
   private active: WeaponId | null = 'pickaxe';
+  private trail = new SwingTrail();
   private swingT = 0;
+  private walkPhase = 0;
+  private walkK = 0;
+  private lastPos = new THREE.Vector3();
+  private tmpA = new THREE.Vector3();
+  private tmpB = new THREE.Vector3();
 
-  constructor(color: number) {
-    const skin = new THREE.MeshStandardMaterial({ color: 0xf1c27d });
-    const cloth = new THREE.MeshStandardMaterial({ color });
-    const pants = new THREE.MeshStandardMaterial({ color: 0x2b2f3a });
+  constructor(lookId: AvatarLook) {
+    const look = LOOKS[lookId];
+    const m = {
+      skin: flat(look.skin),
+      hair: flat(look.hair),
+      top: flat(look.top),
+      sleeve: flat(look.sleeve),
+      bracer: flat(look.bracer),
+      pants: flat(look.pants),
+      legs: flat(look.legs),
+      shoes: flat(look.shoes),
+      belt: flat(look.belt),
+      dark: flat(0x111111),
+    };
 
-    this.body.add(box(0.26, 0.85, 0.3, pants, -0.16, 0.425));
-    this.body.add(box(0.26, 0.85, 0.3, pants, 0.16, 0.425));
-    this.body.add(box(0.7, 0.65, 0.4, cloth, 0, 1.175));
-    this.body.add(box(0.18, 0.6, 0.2, cloth, -0.45, 1.15));
-    const head = new THREE.Mesh(new THREE.SphereGeometry(PLAYER.headRadius, 16, 12), skin);
-    head.position.y = PLAYER.height - PLAYER.headRadius;
+    // Jambes articulées à la hanche.
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.12, 0.92, 0);
+      leg.add(limb(v3(0, 0, 0), v3(0, -0.46, 0), 0.19, m.legs));
+      leg.add(limb(v3(0, -0.46, 0), v3(0, -0.84, 0), 0.16, lookId === 'barbarian' ? m.shoes : m.legs));
+      leg.add(box(0.18, 0.1, 0.28, m.shoes, 0, -0.87, -0.04));
+      this.legs.push(leg);
+      this.body.add(leg);
+    }
+
+    // Bassin, ceinture, torse.
+    this.body.add(box(0.4, 0.2, 0.26, m.pants, 0, 0.95));
+    this.body.add(box(0.42, 0.07, 0.28, m.belt, 0, 1.05));
+    if (lookId === 'barbarian') {
+      this.body.add(box(0.3, 0.32, 0.04, m.pants, 0, 0.8, -0.14));
+      this.body.add(box(0.3, 0.32, 0.04, m.pants, 0, 0.8, 0.14));
+      this.body.add(box(0.22, 0.1, 0.24, m.top, -0.3, 1.52));
+    }
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.2, 0.5, 6), m.top);
+    torso.scale.z = 0.62;
+    torso.position.y = 1.32;
+    torso.castShadow = true;
+    this.body.add(torso);
+    if (look.shirt) this.body.add(box(0.12, 0.4, 0.02, flat(look.shirt), 0, 1.33, -0.165));
+
+    // Tête et coiffure.
+    this.body.add(box(0.12, 0.1, 0.12, m.skin, 0, 1.58));
+    const headY = PLAYER.height - PLAYER.headRadius;
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), m.skin);
+    head.position.y = headY;
+    head.scale.set(0.95, 1.05, 1);
     head.castShadow = true;
     this.body.add(head);
+    if (look.style === 'spikes') {
+      for (let i = 0; i < 7; i++) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 4), m.hair);
+        const a = (i / 6 - 0.5) * 1.6;
+        spike.position.set(Math.sin(a) * 0.12, headY + 0.2, 0.04 + Math.cos(a) * 0.05);
+        spike.rotation.set(0.5, 0, -a * 0.6);
+        spike.castShadow = true;
+        this.body.add(spike);
+      }
+      this.body.add(box(0.06, 0.04, 0.02, m.dark, -0.08, headY + 0.02, -0.235));
+      this.body.add(box(0.06, 0.04, 0.02, m.dark, 0.08, headY + 0.02, -0.235));
+    } else {
+      this.body.add(box(0.46, 0.12, 0.44, m.hair, 0, headY + 0.19, 0.02));
+      this.body.add(box(0.46, 0.2, 0.1, m.hair, 0, headY + 0.06, 0.2));
+      this.body.add(box(0.38, 0.07, 0.04, m.dark, 0, headY + 0.03, -0.235));
+    }
 
-    this.arm.position.set(0.42, 1.42, 0);
-    this.arm.add(box(0.18, 0.18, 0.55, cloth, 0, 0, -0.25));
-    this.body.add(this.arm);
-    this.group.add(this.body);
+    // Haut du corps : bras + armes.
+    this.rig.position.y = CHEST_Y;
+    this.rig.add(this.pivot);
+    this.body.add(this.rig);
+    this.group.add(this.body, this.trail.mesh);
+
+    const addArms = (c: THREE.Group, right: THREE.Vector3, left: THREE.Vector3) => {
+      for (const [side, hand] of [
+        [1, right],
+        [-1, left],
+      ] as const) {
+        const shoulder = v3(side * 0.28, 0.1, 0);
+        const elbow = shoulder.clone().lerp(hand, 0.5).add(v3(side * 0.12, -0.14, 0.08));
+        c.add(box(0.16, 0.16, 0.18, m.top, shoulder.x, shoulder.y, shoulder.z));
+        c.add(limb(shoulder, elbow, 0.13, m.sleeve));
+        c.add(limb(elbow, hand, 0.11, m.sleeve));
+        c.add(limb(elbow.clone().lerp(hand, 0.45), hand, 0.125, m.bracer));
+        c.add(box(0.1, 0.1, 0.1, m.skin, hand.x, hand.y, hand.z));
+      }
+    };
 
     for (const id of WEAPON_ORDER) {
-      const { obj, muzzle } = makeWeapon(id);
-      obj.position.set(0, -0.02, -0.5);
-      obj.visible = id === this.active;
-      this.arm.add(obj);
-      this.items.set(id, { obj, muzzle });
+      const model = makeWeaponModel(id);
+      const container = new THREE.Group();
+      if (id === 'pickaxe') {
+        model.obj.position.set(0.14, -0.42, -0.36);
+        model.obj.rotation.set(-0.25, 0, 0.4);
+      } else {
+        model.obj.position.set(0.17, -0.2, -0.24);
+      }
+      model.obj.updateMatrix();
+      const toRig = (p: THREE.Vector3) => p.clone().applyMatrix4(model.obj.matrix);
+      container.add(model.obj);
+      addArms(container, toRig(model.rightHand), toRig(model.leftHand));
+      this.addItem(id, { container, model });
     }
+    // Mode construction : mains vides, bras le long du corps.
+    const empty = new THREE.Group();
+    addArms(empty, v3(0.36, -0.62, 0.02), v3(-0.36, -0.62, 0.02));
+    this.addItem('none', { container: empty, model: null });
+    this.applyVisibility();
+  }
+
+  private addItem(id: WeaponId | 'none', item: HeldItem) {
+    this.pivot.add(item.container);
+    this.items.set(id, item);
+  }
+
+  private applyVisibility() {
+    const key = this.active ?? 'none';
+    for (const [id, it] of this.items) it.container.visible = id === key;
   }
 
   setWeapon(id: WeaponId | null) {
     if (id === this.active) return;
     this.active = id;
-    for (const [wid, it] of this.items) it.obj.visible = wid === id;
+    this.swingT = 0;
+    this.pivot.rotation.set(0, 0, 0);
+    this.applyVisibility();
   }
 
   setCrouch(crouch: boolean) {
@@ -62,59 +213,68 @@ export class Avatar {
 
   /** pitch > 0 = regarde vers le haut (Rx positif relève l'axe -Z). */
   setPitch(pitch: number) {
-    this.arm.rotation.x = pitch;
+    this.rig.rotation.x = this.active === null ? 0 : pitch * 0.8;
   }
 
   swing() {
-    this.swingT = 0.3;
+    if (this.active === 'pickaxe') this.swingT = SWING_TIME;
   }
 
   update(dt: number) {
+    this.animateWalk(dt);
+    this.animateSwing(dt);
+    this.trail.update(dt);
+  }
+
+  /** Vitesse déduite du déplacement réel : fonctionne pour le joueur local comme pour l'adversaire interpolé. */
+  private animateWalk(dt: number) {
+    const p = this.group.position;
+    const speed = dt > 0 ? Math.min(Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.z) / dt, 12) : 0;
+    this.lastPos.copy(p);
+    this.walkK += (Math.min(speed / PLAYER.walkSpeed, 1) - this.walkK) * Math.min(1, dt * 10);
+    this.walkPhase += dt * (5 + speed * 0.9);
+    const a = Math.sin(this.walkPhase) * 0.7 * this.walkK;
+    this.legs[0].rotation.x = a;
+    this.legs[1].rotation.x = -a;
+  }
+
+  private animateSwing(dt: number) {
     if (this.swingT <= 0) return;
     this.swingT = Math.max(0, this.swingT - dt);
-    this.arm.rotation.x -= Math.sin((1 - this.swingT / 0.3) * Math.PI) * 1.3;
+    const p = 1 - this.swingT / SWING_TIME;
+    let rx: number;
+    let ry: number;
+    if (p < 0.22) {
+      // Armé au-dessus de l'épaule.
+      const q = Math.sin((p / 0.22) * (Math.PI / 2));
+      rx = 0.9 * q;
+      ry = 0.35 * q;
+    } else if (p < 0.55) {
+      // Frappe en diagonale, de plus en plus rapide.
+      const q = ((p - 0.22) / 0.33) ** 2;
+      rx = 0.9 - 2.6 * q;
+      ry = 0.35 - 0.95 * q;
+      this.sampleTrail();
+    } else {
+      const q = (p - 0.55) / 0.45;
+      const e = 1 - q * q * (3 - 2 * q);
+      rx = -1.7 * e;
+      ry = -0.6 * e;
+    }
+    this.pivot.rotation.set(rx, ry, 0);
+  }
+
+  private sampleTrail() {
+    const trail = this.items.get('pickaxe')?.model?.trail;
+    if (!trail) return;
+    this.group.updateMatrixWorld(true);
+    const inner = this.group.worldToLocal(trail[0].getWorldPosition(this.tmpA));
+    const outer = this.group.worldToLocal(trail[1].getWorldPosition(this.tmpB));
+    this.trail.push(inner, outer);
   }
 
   getMuzzleWorld(out: THREE.Vector3) {
-    const it = this.active ? this.items.get(this.active) : undefined;
-    return it ? it.muzzle.getWorldPosition(out) : this.arm.getWorldPosition(out);
+    const model = this.active ? this.items.get(this.active)?.model : null;
+    return model ? model.muzzle.getWorldPosition(out) : this.rig.getWorldPosition(out);
   }
-}
-
-/** Modèles d'armes orientés vers -Z, avec un point "bouche" pour les traçantes. */
-function makeWeapon(id: WeaponId) {
-  const metal = new THREE.MeshStandardMaterial({ color: 0x2d2f36, metalness: 0.6, roughness: 0.4 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0x8a5a2b });
-  const accent = new THREE.MeshStandardMaterial({ color: id === 'sniper' ? 0x3f6b3a : 0x6a6f7c });
-  const obj = new THREE.Group();
-  const muzzle = new THREE.Object3D();
-  let length = 0.8;
-
-  switch (id) {
-    case 'pickaxe':
-      obj.add(box(0.06, 0.06, 0.9, wood, 0, 0, -0.2));
-      obj.add(box(0.7, 0.1, 0.12, new THREE.MeshStandardMaterial({ color: 0x9fd6ff, metalness: 0.5 }), 0, 0, -0.62));
-      length = 0.7;
-      break;
-    case 'shotgun':
-      obj.add(box(0.1, 0.14, 0.45, wood, 0, -0.02, 0.05));
-      obj.add(box(0.08, 0.08, 0.85, metal, 0, 0.04, -0.35));
-      length = 0.8;
-      break;
-    case 'ar':
-      obj.add(box(0.1, 0.16, 0.7, accent, 0, 0, -0.2));
-      obj.add(box(0.06, 0.06, 0.4, metal, 0, 0.02, -0.7));
-      obj.add(box(0.07, 0.22, 0.1, metal, 0, -0.17, -0.25));
-      length = 0.9;
-      break;
-    case 'sniper':
-      obj.add(box(0.1, 0.14, 0.8, accent, 0, 0, -0.2));
-      obj.add(box(0.05, 0.05, 0.7, metal, 0, 0.03, -0.9));
-      obj.add(box(0.08, 0.08, 0.35, metal, 0, 0.14, -0.25));
-      length = 1.25;
-      break;
-  }
-  muzzle.position.set(0, 0.03, -length);
-  obj.add(muzzle);
-  return { obj, muzzle };
 }

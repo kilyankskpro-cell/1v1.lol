@@ -16,7 +16,7 @@ interface Sample {
 }
 
 export class RemotePlayer {
-  readonly avatar = new Avatar(0xe0473f);
+  readonly avatar = new Avatar('agent');
   name = '';
   alive = true;
   crouch = false;
@@ -30,6 +30,7 @@ export class RemotePlayer {
     this.label = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
     this.label.position.y = 2.3;
     this.label.scale.set(2, 0.5, 1);
+    this.label.visible = false; // affichée dès que le nom est connu
     this.avatar.group.add(this.label);
     scene.add(this.avatar.group);
   }
@@ -78,6 +79,7 @@ export class RemotePlayer {
 
   private setName(name: string) {
     this.name = name;
+    this.label.visible = name !== '';
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 64;

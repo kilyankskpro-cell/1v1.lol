@@ -45,7 +45,7 @@ export class World {
     scene.background = spaceSkyTexture();
     scene.fog = new THREE.Fog(0x07060f, 140, 420);
 
-    scene.add(new THREE.HemisphereLight(0xb9c4ff, 0x2a2633, 0.9));
+    scene.add(new THREE.HemisphereLight(0xc9d2ff, 0x6a6470, 1.6));
     const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
     sun.position.set(-40, 35, 25);
     sun.castShadow = true;
@@ -75,6 +75,10 @@ export class World {
 
   hasStructure(id: string) {
     return this.structures.has(id);
+  }
+
+  *structureData(): Iterable<Structure> {
+    for (const rec of this.structures.values()) yield rec.data;
   }
 
   getStructure(id: string): Structure | undefined {

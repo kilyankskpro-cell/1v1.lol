@@ -102,6 +102,8 @@ export interface ClientToServerEvents {
   fire: (msg: FireMsg) => void;
   build: (msg: StructureSpec) => void;
   edit: (msg: EditMsg) => void;
+  /** Mesure du ping : le serveur rappelle immédiatement l'accusé de réception. */
+  latency: (ack: () => void) => void;
 }
 
 export interface ServerToClientEvents {

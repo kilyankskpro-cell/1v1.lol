@@ -133,6 +133,7 @@ export class Room {
     socket.on('fire', guard(this.onFire));
     socket.on('build', guard(this.onBuild));
     socket.on('edit', guard(this.onEdit));
+    socket.on('latency', (ack) => typeof ack === 'function' && ack());
 
     socket.emit('joined', {
       selfId: player.id,
