@@ -16,7 +16,7 @@ import { BuildSystem } from './BuildSystem';
 import { Effects } from './Effects';
 import { BUILD_KEYS, HUD } from './HUD';
 import { Input } from './Input';
-import { connect, type GameSocket } from './Network';
+import type { GameSocket } from './Network';
 import { NO_INPUT, PlayerController, type MoveInput } from './PlayerController';
 import { RemotePlayer } from './RemotePlayer';
 import { BASE_FOV, ThirdPersonCamera, type CameraMode } from './ThirdPersonCamera';
@@ -29,7 +29,6 @@ export class Game {
   private camera = new THREE.PerspectiveCamera(BASE_FOV, 1, 0.05, 1000);
   private clock = new THREE.Clock();
   private input: Input;
-  private net: GameSocket;
   private world: World;
   private player = new PlayerController();
   private tpsCam = new ThirdPersonCamera(this.camera);
@@ -54,6 +53,8 @@ export class Game {
     private container: HTMLElement,
     private mode: GameMode,
     private name: string,
+    private net: GameSocket,
+    private offline: boolean,
   ) {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -64,7 +65,6 @@ export class Game {
     this.world = new World(this.scene, createArena(mode));
     this.scene.add(this.avatar.group);
 
-    this.net = connect();
     this.build = new BuildSystem({
       scene: this.scene,
       world: this.world,
@@ -93,7 +93,7 @@ export class Game {
   }
 
   start() {
-    this.hud.show(this.mode === 'duel' ? 'DUEL 1V1' : 'JUSTBUILD');
+    this.hud.show((this.mode === 'duel' ? 'DUEL 1V1' : 'JUSTBUILD') + (this.offline ? ' · HORS LIGNE' : ''));
     this.hud.message('Connexion…', 0);
     this.net.emit('join', { mode: this.mode, name: this.name });
     this.renderer.setAnimationLoop(() => this.frame());
@@ -132,7 +132,9 @@ export class Game {
       this.weapons.resetAmmo(this.unlimited);
 
       const opponents = Object.keys(m.spawns).length - 1;
-      if (this.mode === 'duel' && opponents === 0) {
+      if (this.mode === 'duel' && opponents === 0 && this.offline) {
+        this.hud.message('Mode hors ligne — entraînement solo dans l\'arène de duel', 3);
+      } else if (this.mode === 'duel' && opponents === 0) {
         this.hud.message("En attente d'un adversaire… (ouvrez un 2ᵉ onglet pour tester)", 0);
       } else {
         this.hud.message(this.mode === 'duel' ? `Manche ${m.round} — Combat !` : 'Construisez librement !', 2);

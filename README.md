@@ -57,6 +57,8 @@ npm run dev          # serveur de jeu :3001 + client Vite :5173
 3. **Duel 1v1** : ouvrez un **2ᵉ onglet** (ou une autre machine du réseau via `http://<ip>:5173`) et cliquez aussi sur *Duel 1v1* : les deux joueurs sont appairés automatiquement.
 4. Cliquez dans la scène pour capturer la souris (Échap pour la libérer).
 
+**Hors ligne :** cochez *Jouer hors ligne* dans le menu, ou coupez la connexion : si le serveur est injoignable, le client exécute la même logique autoritaire (`server/src/Room.ts`) directement dans le navigateur via un transport en mémoire (`client/src/game/LocalServer.ts`). Le jeu se joue alors en solo (entraînement).
+
 Autres commandes :
 
 ```bash

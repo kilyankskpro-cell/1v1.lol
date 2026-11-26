@@ -77,7 +77,7 @@ export class Room {
   private structures = new Map<string, ServerStructure>();
   private scores: Record<string, number> = {};
   private round = 0;
-  private restartTimer: NodeJS.Timeout | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private io: GameServer,
